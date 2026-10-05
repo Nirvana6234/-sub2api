@@ -570,6 +570,13 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
 	forwardBody := openAIModelMappedBody(body, channelMapping.Mapped, channelMapping.MappedModel, h.gatewayService.ReplaceModelInBody)
+	if !imageIntent {
+		if err := h.gatewayService.CheckBillablePricing(c.Request.Context(), apiKey, reqModel, channelMapping.MappedModel); err != nil {
+			reqLog.Warn("openai.pricing_unavailable", zap.String("model", reqModel), zap.Error(err))
+			h.errorResponse(c, http.StatusServiceUnavailable, "api_error", pricingUnavailableMessage)
+			return
+		}
+	}
 	seedOpenAIForwardImageIntentHint(c, channelMapping.Mapped, imageIntent)
 	forwardModel := openAIChannelForwardModel(channelMapping, reqModel)
 	c.Request = c.Request.WithContext(service.WithOpenAIForwardModel(
@@ -1321,6 +1328,11 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 
 	// 解析渠道级模型映射
 	channelMappingMsg, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
+	if err := h.gatewayService.CheckBillablePricing(c.Request.Context(), apiKey, reqModel, channelMappingMsg.MappedModel); err != nil {
+		reqLog.Warn("openai.messages.pricing_unavailable", zap.String("model", reqModel), zap.Error(err))
+		h.anthropicErrorResponse(c, http.StatusServiceUnavailable, "api_error", pricingUnavailableMessage)
+		return
+	}
 	mappedBodyForMessages := newOpenAIModelMappedBodyCache(body, h.gatewayService.ReplaceModelInBody)
 
 	// 绑定错误透传服务，允许 service 层在非 failover 错误场景复用规则。

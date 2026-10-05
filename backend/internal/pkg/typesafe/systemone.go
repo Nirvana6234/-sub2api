@@ -23,6 +23,17 @@ var (
 )
 
 func ValidateSystemOneRequest(body []byte) (string, error) {
+	return validateSystemOneRequest(body, true)
+}
+
+// ValidateSystemOneShape 与 ValidateSystemOneRequest 做同样的结构校验（键名、重复键、
+// 问题类型与 criteria 形状、stream），但不要求 model 恰为 jev-latest：版本固定的客户端
+// 会请求 jev-1.13.0 这类具体版本，模型是否可用由分组白名单与定价决定。
+func ValidateSystemOneShape(body []byte) (string, error) {
+	return validateSystemOneRequest(body, false)
+}
+
+func validateSystemOneRequest(body []byte, requireLatest bool) (string, error) {
 	var envelope systemOneEnvelope
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		return "", errors.New("invalid JSON request")
@@ -38,7 +49,7 @@ func ValidateSystemOneRequest(body []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if model != JevLatestModel {
+	if requireLatest && model != JevLatestModel {
 		return "", fmt.Errorf("model must be %s", JevLatestModel)
 	}
 	if err := validateStringObjectOrArray(envelope.State, "state"); err != nil {

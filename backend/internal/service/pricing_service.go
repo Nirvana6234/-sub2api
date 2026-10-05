@@ -760,7 +760,11 @@ func (s *PricingService) parsePricingData(body []byte) (map[string]*LiteLLMModel
 			}
 		}
 		if orphans := orphanCacheTierFields(rawEntry); len(orphans) > 0 {
+			// 缺基础价的缓存分项会按 0 元计费，等于白送：整条目录条目不进价格表，
+			// 该模型随即「无价可循」，入口处被 CheckBillablePricing 拒绝，直到目录或
+			// pricing.override_file 补上基础价。
 			orphanCacheTiers = append(orphanCacheTiers, modelName+"("+strings.Join(orphans, ",")+")")
+			continue
 		}
 
 		result[modelName] = pricing
@@ -911,8 +915,9 @@ func orphanCacheTierFields(rawEntry json.RawMessage) []string {
 	return orphans
 }
 
-// warnOrphanCacheTierFields 对带 cache 侧 above 档却没有基础价的条目打 WARN：
-// 该缓存分项按 0 计费，目录或 pricing.override_file 补上基础价即可消除。
+// warnOrphanCacheTierFields 对带 cache 侧 above 档却没有基础价的条目打 ERROR：
+// 这些条目已被排除出价格表（不允许按 0 元计费），目录或 pricing.override_file
+// 补上基础价后才会恢复。
 func warnOrphanCacheTierFields(entries []string) {
 	if len(entries) == 0 {
 		return
@@ -922,7 +927,7 @@ func warnOrphanCacheTierFields(entries []string) {
 	if total > 20 {
 		entries = append(entries[:20], "...")
 	}
-	logger.LegacyPrintf("service.pricing", "[Pricing] Warning: %d model(s) carry cache above-tier prices without a base cache price; that cache item bills at $0 until the catalog/override supplies the base: %s", total, strings.Join(entries, ", "))
+	logger.LegacyPrintf("service.pricing", "[Pricing] ERROR: %d model(s) carry cache above-tier prices without a base cache price; they are EXCLUDED from the price table (requests are refused instead of billing $0) until the catalog/override supplies the base: %s", total, strings.Join(entries, ", "))
 }
 
 // applyPricingOverrides 把 override 文件的条目逐字段修补进原始目录数据。目录与回退

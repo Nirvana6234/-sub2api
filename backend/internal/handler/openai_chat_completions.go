@@ -116,6 +116,11 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
+	if err := h.gatewayService.CheckBillablePricing(c.Request.Context(), apiKey, reqModel, channelMapping.MappedModel); err != nil {
+		reqLog.Warn("gateway.pricing_unavailable", zap.String("model", reqModel), zap.Error(err))
+		h.errorResponse(c, http.StatusServiceUnavailable, "api_error", pricingUnavailableMessage)
+		return
+	}
 	forwardModel := openAIChannelForwardModel(channelMapping, reqModel)
 
 	if h.errorPassthroughService != nil {

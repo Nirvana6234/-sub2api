@@ -107,6 +107,13 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(requestCtx, apiKey.GroupID, reqModel)
+	if !service.IsImageGenerationIntentForPlatform("/v1/responses", reqModel, body, openAICompatibleRequestPlatform(requestCtx, apiKey)) {
+		if err := h.gatewayService.CheckBillablePricing(requestCtx, apiKey, reqModel, channelMapping.MappedModel); err != nil {
+			reqLog.Warn("gateway.pricing_unavailable", zap.String("model", reqModel), zap.Error(err))
+			h.responsesErrorResponse(c, http.StatusServiceUnavailable, "pricing_unavailable", pricingUnavailableMessage)
+			return
+		}
+	}
 
 	// Claude Code only restriction: /v1/responses is never a Claude Code
 	// endpoint. With a fallback group the request continues and account selection

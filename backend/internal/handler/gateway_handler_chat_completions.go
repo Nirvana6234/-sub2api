@@ -103,6 +103,11 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
+	if err := h.gatewayService.CheckBillablePricing(c.Request.Context(), apiKey, reqModel, channelMapping.MappedModel); err != nil {
+		reqLog.Warn("gateway.pricing_unavailable", zap.String("model", reqModel), zap.Error(err))
+		h.chatCompletionsErrorResponse(c, http.StatusServiceUnavailable, "api_error", pricingUnavailableMessage)
+		return
+	}
 
 	// Claude Code only restriction: /v1/chat/completions is never a Claude Code
 	// endpoint. With a fallback group the request continues and account selection

@@ -351,6 +351,11 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, modelName)
+	if err := h.gatewayService.CheckBillablePricing(c.Request.Context(), apiKey, modelName, channelMapping.MappedModel); err != nil {
+		reqLog.Warn("gemini.pricing_unavailable", zap.String("model", modelName), zap.Error(err))
+		googleError(c, http.StatusServiceUnavailable, pricingUnavailableMessage)
+		return
+	}
 	reqModel := modelName // 保存映射前的原始模型名
 	if channelMapping.Mapped {
 		modelName = channelMapping.MappedModel
