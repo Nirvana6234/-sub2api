@@ -89,3 +89,38 @@ func TestNodeServesEmbeddingsLikeASingleServer(t *testing.T) {
 	require.Equal(t, localStatus, nodeStatus)
 	require.Equal(t, localBody, nodeBody)
 }
+
+const imagesBody = `{"model":"gpt-image-1","prompt":"a cat","n":1}`
+
+// 同步图片入口经从节点：与单机同请求的响应一致；用量同一个记录种类；没有可用账号时的错误一致。
+func TestNodeServesImagesLikeASingleServer(t *testing.T) {
+	accounts := []service.Account{apiKeyAccount(1, "one")}
+	e := startStandardE2E(t, func(upstream string) []service.Account {
+		accounts[0].Credentials["base_url"] = upstream
+		accounts[0].AccountGroups = []service.AccountGroup{{AccountID: 1, GroupID: 5}}
+		return accounts
+	})
+	e.world.keys.keys["sk-a"].Group.AllowImageGeneration = true
+	local := startLocalOpenAI(t, e, accounts, func(g *gin.RouterGroup, h *handler.OpenAIGatewayHandler) {
+		g.POST("/images/generations", h.Images)
+	})
+	nodeStatus, nodeBody := e.post(t, "/v1/images/generations", "sk-a", imagesBody)
+	e.world.waitReleased(t)
+	localStatus, localBody := local.post(t, "/v1/images/generations", "sk-a", imagesBody)
+	require.Equal(t, http.StatusOK, localStatus, localBody)
+	require.Equal(t, localStatus, nodeStatus, nodeBody)
+	require.Equal(t, localBody, nodeBody)
+	require.Eventually(t, func() bool { return len(e.settler.records()) == 1 }, 5e9, 2e7)
+	require.Equal(t, int64(5), mustVoucher(t, e, e.settler.records()[0]).GetGroupId())
+
+	empty := startStandardE2E(t, func(string) []service.Account { return nil })
+	empty.world.keys.keys["sk-a"].Group.AllowImageGeneration = true
+	emptyLocal := startLocalOpenAI(t, empty, nil, func(g *gin.RouterGroup, h *handler.OpenAIGatewayHandler) {
+		g.POST("/images/generations", h.Images)
+	})
+	nodeStatus, nodeBody = empty.post(t, "/v1/images/generations", "sk-a", imagesBody)
+	empty.world.waitReleased(t)
+	localStatus, localBody = emptyLocal.post(t, "/v1/images/generations", "sk-a", imagesBody)
+	require.Equal(t, localStatus, nodeStatus)
+	require.Equal(t, localBody, nodeBody)
+}

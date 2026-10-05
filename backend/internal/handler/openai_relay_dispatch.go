@@ -120,6 +120,10 @@ type OpenAIRelaySelectRequest struct {
 
 	// Embeddings：OpenAI 分组的 /v1/embeddings。
 	Embeddings bool
+
+	// Images：OpenAI 分组的同步图片入口；ImagesCapability 是请求需要的图片能力，Model 是选号用的路由模型。
+	Images           bool
+	ImagesCapability string
 }
 
 // OpenAIRelaySelectResult 是一次远程选号的结果：Attempt 与 Rejection 二选一。

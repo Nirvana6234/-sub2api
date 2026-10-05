@@ -527,6 +527,9 @@ enum SelectEndpoint {
   SELECT_ENDPOINT_GATEWAY_CHAT = 9;
   // OpenAI 分组的 /v1/embeddings（OpenAIGatewayHandler.Embeddings）：只走 HTTP/SSE、没有会话、没有 cyber 屏蔽，选号按 Embeddings 能力。
   SELECT_ENDPOINT_OPENAI_EMBEDDINGS = 10;
+  // OpenAI 分组的同步图片入口（/v1/images/generations、/v1/images/edits，OpenAIGatewayHandler.Images）：按 required_capability 选
+  // 账号（SelectAccountWithSchedulerForImages，不装利润门、只走 HTTP/SSE），选号用请求的路由模型（渠道映射只在转发时用）。
+  SELECT_ENDPOINT_OPENAI_IMAGES = 11;
 }
 
 message AdmitRequest {
@@ -733,6 +736,8 @@ message SelectRequest {
   // Gemini 原生入口：请求体的内容摘要链（service.BuildGeminiDigestChain；没有可摘要的内容时为空）。粘性会话没有绑定时
   // 主节点按它做摘要会话匹配（需要客户端 IP、User-Agent，选号请求里已有）。
   string gemini_digest_chain = 32;
+  // 同步图片入口：请求需要的图片能力（service.OpenAIImagesCapability，如 native / basic）。
+  string required_capability = 33;
 }
 
 // cyber 会话屏蔽的查询键（都已哈希）。

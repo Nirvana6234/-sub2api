@@ -192,6 +192,8 @@ func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler
 		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_GATEWAY_CHAT
 	case req.Embeddings:
 		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_EMBEDDINGS
+	case req.Images:
+		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_IMAGES
 	case req.CountTokens:
 		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_COUNT_TOKENS
 	case req.Anthropic:
@@ -226,6 +228,7 @@ func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler
 		InterceptType:           int32(req.InterceptType),
 		FallbackGroupId:         st.fallbackGroupID,
 		GeminiDigestChain:       req.GeminiDigestChain,
+		RequiredCapability:      req.ImagesCapability,
 	}
 	if st.fallbackGroupID != 0 {
 		// Key 现在是换了分组的副本，自动分组的"当前分组"仍是切换之前的。
@@ -246,7 +249,7 @@ func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler
 	for id := range req.Excluded {
 		sreq.ExcludedAccountIds = append(sreq.ExcludedAccountIds, id)
 	}
-	if !req.Anthropic && !req.Gemini && !req.GatewayResponses && !req.GatewayChat && !req.Embeddings && d.deps.CyberEnabled != nil && d.deps.CyberEnabled(c.Request.Context()) {
+	if !req.Anthropic && !req.Gemini && !req.GatewayResponses && !req.GatewayChat && !req.Embeddings && !req.Images && d.deps.CyberEnabled != nil && d.deps.CyberEnabled(c.Request.Context()) {
 		l := service.NewCyberSessionLookup(req.APIKey.ID, c, req.Body, clientIP, c.GetHeader("User-Agent"))
 		sreq.Cyber = &relayv1.CyberSessionLookup{
 			ExplicitKey: l.ExplicitKey, ScopeKey: l.ScopeKey, TranscriptKeys: l.TranscriptKeys, TranscriptTruncated: l.TranscriptTruncated,

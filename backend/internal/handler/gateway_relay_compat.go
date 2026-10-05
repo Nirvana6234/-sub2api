@@ -198,3 +198,16 @@ func OpenAIEmbeddingsFirstSelectFailureRejection(ctx context.Context, diag servi
 	}
 	return r
 }
+
+// OpenAIImagesNoAccountRejection：同步图片入口选不出账号时的错误（本地 Images：按模型不存在分类，否则统一说没有兼容账号）。
+func OpenAIImagesNoAccountRejection(ctx context.Context, diag service.ModelAvailabilityDiagnoser, apiKey *service.APIKey, model string, selectErr error) OpenAIGatewayRejection {
+	cls := classifyNoAccountError(ctx, diag, apiKey, model, model, service.PlatformOpenAI)
+	r := OpenAIGatewayRejection{Status: cls.Status, ErrType: cls.ErrType, Message: cls.Message}
+	if cls.ModelNotFound {
+		r.OpsBusinessLimitedReason = service.OpsClientBusinessLimitedReasonLocalModelConfiguration
+	} else {
+		r.Message = "No available compatible accounts"
+		r.RoutingCapacityLimited = selectErr == nil || isOpsNoAvailableAccountError(selectErr)
+	}
+	return r
+}

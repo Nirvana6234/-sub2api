@@ -114,7 +114,11 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 	setOpsRequestContext(c, clientRequestModel, parsed.Stream)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(parsed.Stream, false)))
 
-	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, routingModel)
+	// 从节点：渠道映射在主节点选号时做。
+	var channelMapping service.ChannelMappingResult
+	if h.relay == nil {
+		channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, routingModel)
+	}
 
 	if h.errorPassthroughService != nil {
 		service.BindErrorPassthroughService(c, h.errorPassthroughService)
@@ -125,22 +129,27 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
 	routingStart := time.Now()
 
-	userReleaseFunc, acquired := h.acquireResponsesUserSlot(c, subject.UserID, subject.Concurrency, parsed.Stream, &streamStarted, reqLog)
-	if !acquired {
-		return
-	}
-	if userReleaseFunc != nil {
-		defer userReleaseFunc()
-	}
-
-	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
-		reqLog.Info("openai.images.billing_eligibility_check_failed", zap.Error(err))
-		status, code, message, retryAfter := billingErrorDetails(err)
-		if retryAfter > 0 {
-			c.Header("Retry-After", strconv.Itoa(retryAfter))
+	// 从节点：用户并发槽和计费资格在主节点第一次选号时做。
+	if h.relay != nil {
+		defer h.relay.RequestDone(c)
+	} else {
+		userReleaseFunc, acquired := h.acquireResponsesUserSlot(c, subject.UserID, subject.Concurrency, parsed.Stream, &streamStarted, reqLog)
+		if !acquired {
+			return
 		}
-		h.handleStreamingAwareError(c, status, code, message, streamStarted)
-		return
+		if userReleaseFunc != nil {
+			defer userReleaseFunc()
+		}
+
+		if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+			reqLog.Info("openai.images.billing_eligibility_check_failed", zap.Error(err))
+			status, code, message, retryAfter := billingErrorDetails(err)
+			if retryAfter > 0 {
+				c.Header("Retry-After", strconv.Itoa(retryAfter))
+			}
+			h.handleStreamingAwareError(c, status, code, message, streamStarted)
+			return
+		}
 	}
 
 	sessionHash := h.gatewayService.GenerateExplicitSessionHash(c, body)
@@ -157,17 +166,78 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 	jsonKeepaliveStarted := false
 	defer func() { stopJSONKeepalive() }()
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
+	var relayAttempt *OpenAIRelayAttempt
 
 	for {
 		reqLog.Debug("openai.images.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
-		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForImages(
-			requestCtx,
-			apiKey.GroupID,
-			sessionHash,
-			routingModel,
-			failedAccountIDs,
-			parsed.RequiredCapability,
-		)
+		var outcome OpenAISelectOutcome
+		if h.relay != nil {
+			res := h.relay.Select(c, OpenAIRelaySelectRequest{
+				Images: true, ImagesCapability: string(parsed.RequiredCapability), APIKey: apiKey, Model: routingModel, Stream: parsed.Stream,
+				SessionHash: sessionHash, Excluded: failedAccountIDs, Body: body,
+			})
+			if res.Rejection != nil && !res.Rejection.AutoGroupFailover {
+				h.writeOpenAIRelayRejection(c, res.Rejection, apiKey, clientRequestModel, cyberBlockFormatResponses, lastFailoverErr, streamStarted, reqLog)
+				return
+			}
+			if res.Rejection != nil {
+				// 本地这时先换到下一个候选分组再试：照本地选号失败的分支走（没换成时按这个拒绝写）。
+				outcome = relayAutoGroupFailoverOutcome(c, res.Rejection, sessionHash)
+			} else {
+				relayAttempt = res.Attempt
+				channelMapping = relayAttempt.ChannelMapping
+				maxAccountSwitches = relayAttempt.MaxAccountSwitches
+				setOpsSelectedAccount(c, relayAttempt.Account.ID, relayAttempt.Account.Platform)
+				outcome = h.relayAttemptOutcome(c, relayAttempt)
+			}
+		} else {
+			// 选号与准入（与主节点的选号共用 OpenAIAccountAdmitter）：图片入口按能力选，不装利润门。
+			onTick, cannotWait := h.openAIAdmissionWaitHooks(c, parsed.Stream, &streamStarted)
+			selectState := OpenAISelectState{ProfitVetoCount: profitVetoCount}
+			outcome = OpenAIAccountAdmitter{Gateway: h.gatewayService, Concurrency: h.concurrencyHelper}.SelectAndAdmit(requestCtx, OpenAISelectRequest{
+				GroupID:          apiKey.GroupID,
+				SessionHash:      sessionHash,
+				ForwardModel:     routingModel,
+				RequestPlatform:  service.PlatformOpenAI,
+				ImagesCapability: parsed.RequiredCapability,
+				Excluded:         failedAccountIDs,
+				OnTick:           onTick,
+				CannotWait:       cannotWait,
+				OnAccountChosen: func(ctx context.Context, selection *service.AccountSelectionResult) context.Context {
+					setOpsSelectedAccount(c, selection.Account.ID, selection.Account.Platform)
+					c.Request = c.Request.WithContext(service.ContextWithSelectionFallbackTrace(c.Request.Context(), selection))
+					return service.ContextWithSelectionFallbackTrace(ctx, selection)
+				},
+			}, &selectState, reqLog)
+			profitVetoCount = selectState.ProfitVetoCount
+		}
+		sessionHash = outcome.SessionHash
+		var err error
+		switch outcome.Kind {
+		case OpenAISelected:
+		case OpenAISelectAborted:
+			failoverClientGone(c)
+			return
+		case OpenAISelectVetoExhausted:
+			h.handleOpenAIProfitVetoExhausted(c, streamStarted, reqLog, profitVetoCount)
+			return
+		case OpenAISelectQueueFull, OpenAISelectSlotError, OpenAISelectNoWaitPlan:
+			h.writeOpenAIAdmissionFailure(c, outcome, streamStarted)
+			return
+		case OpenAISelectNone:
+			cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, clientRequestModel, routingModel, service.PlatformOpenAI)
+			if !cls.ModelNotFound {
+				markOpsRoutingCapacityLimited(c)
+			}
+			message := cls.Message
+			if !cls.ModelNotFound {
+				message = "No available compatible accounts"
+			}
+			h.handleStreamingAwareError(c, cls.Status, cls.ErrType, message, streamStarted)
+			return
+		default:
+			err = outcome.Err
+		}
 		if err != nil {
 			if failoverClientGone(c) {
 				reqLog.Info("openai.images.account_select_aborted_client_disconnected", zap.Error(err))
@@ -183,6 +253,9 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 					routingModel = openAIChannelForwardModel(channelMapping, clientRequestModel)
 					requestCtx = service.WithOpenAIImagesEndpoint(service.WithOpenAIImageGenerationIntent(c.Request.Context()))
 					continue
+				}
+				if h.writeRelayAutoGroupFailoverRejection(c, err, apiKey, clientRequestModel, cyberBlockFormatResponses, lastFailoverErr, streamStarted, reqLog) {
+					return
 				}
 				cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, clientRequestModel, routingModel, service.PlatformOpenAI)
 				if !cls.ModelNotFound {
@@ -223,45 +296,8 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 			}
 			return
 		}
-		if selection == nil || selection.Account == nil {
-			cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, clientRequestModel, routingModel, service.PlatformOpenAI)
-			if !cls.ModelNotFound {
-				markOpsRoutingCapacityLimited(c)
-			}
-			message := cls.Message
-			if !cls.ModelNotFound {
-				message = "No available compatible accounts"
-			}
-			h.handleStreamingAwareError(c, cls.Status, cls.ErrType, message, streamStarted)
-			return
-		}
-
-		reqLog.Debug("openai.images.account_schedule_decision",
-			zap.String("layer", scheduleDecision.Layer),
-			zap.Bool("sticky_session_hit", scheduleDecision.StickySessionHit),
-			zap.Int("candidate_count", scheduleDecision.CandidateCount),
-			zap.Int("top_k", scheduleDecision.TopK),
-			zap.Int64("latency_ms", scheduleDecision.LatencyMs),
-			zap.Float64("load_skew", scheduleDecision.LoadSkew),
-		)
-
-		account := selection.Account
-		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
-		reqLog.Debug("openai.images.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
-		setOpsSelectedAccount(c, account.ID, account.Platform)
-
-		accountReleaseFunc, slotResult := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, parsed.Stream, &streamStarted, reqLog)
-		if slotResult == openAISlotAcquireProfitVetoed {
-			// Images 调度不装利润门，此分支实际不可达；防御性排除重选并受同一否决上限约束。
-			if !recordOpenAIProfitVeto(failedAccountIDs, account.ID, &profitVetoCount) {
-				h.handleOpenAIProfitVetoExhausted(c, streamStarted, reqLog, profitVetoCount)
-				return
-			}
-			continue
-		}
-		if slotResult != openAISlotAcquireOK {
-			return
-		}
+		account := outcome.Account
+		accountReleaseFunc := wrapReleaseOnDone(outcome.Ctx, outcome.Release)
 
 		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
 		if !parsed.Stream && !jsonKeepaliveStarted {
@@ -432,6 +468,14 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 			upstreamModel = result.UpstreamModel
 		}
 		sessionID := service.ExtractClientSessionID(c)
+		if h.relay != nil {
+			// 从节点：写进本地扣费队列，主节点按凭证用同一个 RecordUsage 入账。
+			h.relay.SubmitUsage(c, relayAttempt, OpenAIUsageFacts{
+				InboundEndpoint: inboundEndpoint, UpstreamEndpoint: upstreamEndpoint, UserAgent: userAgent, IPAddress: clientIP,
+				RequestPayloadHash: requestPayloadHash, SessionID: sessionID,
+			}, result)
+			return
+		}
 		h.submitMandatoryUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 				Result:             result,

@@ -233,6 +233,9 @@ const (
 	SelectEndpoint_SELECT_ENDPOINT_GATEWAY_CHAT      SelectEndpoint = 9
 	// OpenAI 分组的 /v1/embeddings（OpenAIGatewayHandler.Embeddings）：只走 HTTP/SSE、没有会话、没有 cyber 屏蔽，选号按 Embeddings 能力。
 	SelectEndpoint_SELECT_ENDPOINT_OPENAI_EMBEDDINGS SelectEndpoint = 10
+	// OpenAI 分组的同步图片入口（/v1/images/generations、/v1/images/edits，OpenAIGatewayHandler.Images）：按 required_capability 选
+	// 账号（SelectAccountWithSchedulerForImages，不装利润门、只走 HTTP/SSE），选号用请求的路由模型（渠道映射只在转发时用）。
+	SelectEndpoint_SELECT_ENDPOINT_OPENAI_IMAGES SelectEndpoint = 11
 )
 
 // Enum value maps for SelectEndpoint.
@@ -249,6 +252,7 @@ var (
 		8:  "SELECT_ENDPOINT_GATEWAY_RESPONSES",
 		9:  "SELECT_ENDPOINT_GATEWAY_CHAT",
 		10: "SELECT_ENDPOINT_OPENAI_EMBEDDINGS",
+		11: "SELECT_ENDPOINT_OPENAI_IMAGES",
 	}
 	SelectEndpoint_value = map[string]int32{
 		"SELECT_ENDPOINT_UNSPECIFIED":            0,
@@ -262,6 +266,7 @@ var (
 		"SELECT_ENDPOINT_GATEWAY_RESPONSES":      8,
 		"SELECT_ENDPOINT_GATEWAY_CHAT":           9,
 		"SELECT_ENDPOINT_OPENAI_EMBEDDINGS":      10,
+		"SELECT_ENDPOINT_OPENAI_IMAGES":          11,
 	}
 )
 
@@ -4510,8 +4515,10 @@ type SelectRequest struct {
 	// Gemini 原生入口：请求体的内容摘要链（service.BuildGeminiDigestChain；没有可摘要的内容时为空）。粘性会话没有绑定时
 	// 主节点按它做摘要会话匹配（需要客户端 IP、User-Agent，选号请求里已有）。
 	GeminiDigestChain string `protobuf:"bytes,32,opt,name=gemini_digest_chain,json=geminiDigestChain,proto3" json:"gemini_digest_chain,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// 同步图片入口：请求需要的图片能力（service.OpenAIImagesCapability，如 native / basic）。
+	RequiredCapability string `protobuf:"bytes,33,opt,name=required_capability,json=requiredCapability,proto3" json:"required_capability,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *SelectRequest) Reset() {
@@ -4773,6 +4780,13 @@ func (x *SelectRequest) GetFallbackGroupId() int64 {
 func (x *SelectRequest) GetGeminiDigestChain() string {
 	if x != nil {
 		return x.GeminiDigestChain
+	}
+	return ""
+}
+
+func (x *SelectRequest) GetRequiredCapability() string {
+	if x != nil {
+		return x.RequiredCapability
 	}
 	return ""
 }
@@ -9276,7 +9290,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\tOP_NOW_MS\x10\x04\x12\x12\n" +
 	"\x0eOP_ACCOUNT_RPM\x10\x05\",\n" +
 	"\x14UserMsgQueueResponse\x12\x14\n" +
-	"\x05value\x18\x01 \x01(\x03R\x05value\"\xdd\v\n" +
+	"\x05value\x18\x01 \x01(\x03R\x05value\"\x8e\f\n" +
 	"\rSelectRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x18\n" +
@@ -9314,7 +9328,8 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x0eintercept_type\x18\x1d \x01(\x05R\rinterceptType\x12h\n" +
 	"\x13fingerprint_headers\x18\x1e \x03(\v27.sub2api.relay.v1.SelectRequest.FingerprintHeadersEntryR\x12fingerprintHeaders\x12*\n" +
 	"\x11fallback_group_id\x18\x1f \x01(\x03R\x0ffallbackGroupId\x12.\n" +
-	"\x13gemini_digest_chain\x18  \x01(\tR\x11geminiDigestChain\x1aE\n" +
+	"\x13gemini_digest_chain\x18  \x01(\tR\x11geminiDigestChain\x12/\n" +
+	"\x13required_capability\x18! \x01(\tR\x12requiredCapability\x1aE\n" +
 	"\x17FingerprintHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\f\n" +
@@ -9675,7 +9690,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\vBillingMode\x12\x1c\n" +
 	"\x18BILLING_MODE_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14BILLING_MODE_BALANCE\x10\x01\x12\x1d\n" +
-	"\x19BILLING_MODE_SUBSCRIPTION\x10\x02*\xad\x03\n" +
+	"\x19BILLING_MODE_SUBSCRIPTION\x10\x02*\xd0\x03\n" +
 	"\x0eSelectEndpoint\x12\x1f\n" +
 	"\x1bSELECT_ENDPOINT_UNSPECIFIED\x10\x00\x12$\n" +
 	" SELECT_ENDPOINT_OPENAI_RESPONSES\x10\x01\x12\x1f\n" +
@@ -9688,7 +9703,8 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"!SELECT_ENDPOINT_GATEWAY_RESPONSES\x10\b\x12 \n" +
 	"\x1cSELECT_ENDPOINT_GATEWAY_CHAT\x10\t\x12%\n" +
 	"!SELECT_ENDPOINT_OPENAI_EMBEDDINGS\x10\n" +
-	"*\x9b\x02\n" +
+	"\x12!\n" +
+	"\x1dSELECT_ENDPOINT_OPENAI_IMAGES\x10\v*\x9b\x02\n" +
 	"\x0fRejectionFormat\x12 \n" +
 	"\x1cREJECTION_FORMAT_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18REJECTION_FORMAT_GATEWAY\x10\x01\x12\x18\n" +

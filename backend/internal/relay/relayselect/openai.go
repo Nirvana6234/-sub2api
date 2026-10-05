@@ -26,7 +26,8 @@ func (s *selector) Select(ctx context.Context, nodeID int64, req *relayv1.Select
 	ws := false
 	switch req.GetEndpoint() {
 	case relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_RESPONSES, relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_CHAT,
-		relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_MESSAGES, relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_EMBEDDINGS:
+		relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_MESSAGES, relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_EMBEDDINGS,
+		relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_IMAGES:
 	case relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_RESPONSES_WS:
 		ws = true
 	case relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_MESSAGES, relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_COUNT_TOKENS,
@@ -92,6 +93,7 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 	chat := req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_CHAT
 	messages := req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_MESSAGES
 	embeddings := req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_EMBEDDINGS
+	images := req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_IMAGES
 	adm, rej, err := s.admitAPIKey(ctx, req.GetApiKey(), req.GetClientIp(), req.GetMethod(), req.GetPath(), modelCandidates(req),
 		autoGroupChoice{pinned: req.GetAutoGroupId()})
 	if err != nil || rej != nil {
@@ -129,7 +131,7 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 	previousResponseID, imageIntent := strings.TrimSpace(req.GetPreviousResponseId()), req.GetImageIntent()
 	legacyCompact, nativeV2 := req.GetLegacyCompact(), req.GetNativeCompactionV2()
 	capability := handler.OpenAIResponsesRequiredCapability(imageIntent, nativeV2 || legacyCompact, requestPlatform)
-	if chat || messages || embeddings {
+	if chat || messages || embeddings || images {
 		previousResponseID, imageIntent, legacyCompact = "", false, false
 		capability = service.OpenAIEndpointCapabilityChatCompletions
 	}
@@ -161,6 +163,10 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 	}
 	channelMapping, _ := s.deps.Gateway.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, reqModel)
 	forwardModel := handler.OpenAIChannelForwardModel(channelMapping, reqModel)
+	if images {
+		// 图片入口按路由模型选号，渠道映射只在转发时用（本地 Images）。
+		forwardModel = reqModel
+	}
 	if messages {
 		// Messages 按分组的派发映射（或规范化后的请求模型）选号，渠道映射只改请求体。
 		forwardModel = handler.OpenAIMessagesRoutingModel(apiKey, reqModel)
@@ -187,7 +193,12 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 		}
 	}()
 	if first {
-		if rej := s.startRequest(ctx, record, req, adm, quotaReq, !chat && !embeddings, messages, nil); rej != nil {
+		var pricing func(context.Context, *int64) (context.Context, time.Time)
+		if images {
+			// 图片入口不装利润门、不固定计价时间（入账时按当时的价）。
+			pricing = func(ctx context.Context, _ *int64) (context.Context, time.Time) { return ctx, time.Time{} }
+		}
+		if rej := s.startRequest(ctx, record, req, adm, quotaReq, !chat && !embeddings && !images, messages, pricing); rej != nil {
 			return rej, nil
 		}
 		record.groupID = groupID
@@ -205,6 +216,11 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 	defer cancel()
 	stop := context.AfterFunc(ctx, cancel)
 	defer stop()
+	var imagesCapability service.OpenAIImagesCapability
+	if images {
+		attemptCtx = service.WithOpenAIImagesEndpoint(service.WithOpenAIImageGenerationIntent(attemptCtx))
+		imagesCapability = service.OpenAIImagesCapability(req.GetRequiredCapability())
+	}
 
 	for _, id := range req.GetExcludedAccountIds() {
 		record.excluded[id] = struct{}{}
@@ -218,6 +234,7 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 		RequestPlatform:    requestPlatform,
 		RequiredCapability: capability,
 		Transport:          transport,
+		ImagesCapability:   imagesCapability,
 		RequireCompact:     legacyCompact,
 		ImageIntent:        imageIntent,
 		Excluded:           record.excluded,
@@ -248,6 +265,8 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 		var rej *relayv1.SelectResponse
 		if embeddings {
 			rej = gatewayRejection(handler.OpenAIEmbeddingsFirstSelectFailureRejection(ctx, s.deps.Gateway, apiKey, reqModel, outcome.Err))
+		} else if images {
+			rej = gatewayRejection(handler.OpenAIImagesNoAccountRejection(ctx, s.deps.Gateway, apiKey, reqModel, outcome.Err))
 		} else if messages {
 			rej = gatewayRejection(handler.OpenAIMessagesNoAccountRejection(ctx, s.deps.Gateway, apiKey, forwardModel, reqModel, requestPlatform, outcome.Err))
 		} else {

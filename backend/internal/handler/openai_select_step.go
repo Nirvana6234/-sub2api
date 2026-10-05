@@ -55,6 +55,8 @@ type OpenAISelectRequest struct {
 	ForwardModel       string
 	RequestPlatform    string
 	RequiredCapability service.OpenAIEndpointCapability
+	// ImagesCapability 非空时是同步图片入口的选号（SelectAccountWithSchedulerForImages，不装利润门、只走 HTTP/SSE）。
+	ImagesCapability service.OpenAIImagesCapability
 	// Transport 为空时是 OpenAIUpstreamTransportAny（Embeddings 用 HTTP/SSE）。
 	Transport      service.OpenAIUpstreamTransport
 	RequireCompact bool
@@ -107,24 +109,33 @@ func (a OpenAIAccountAdmitter) SelectAndAdmit(ctx context.Context, req OpenAISel
 			return OpenAISelectOutcome{Kind: OpenAISelectAborted, Ctx: ctx, SessionHash: sessionHash, Err: ctx.Err()}
 		}
 		reqLog.Debug("openai.account_selecting", zap.Int("excluded_account_count", len(req.Excluded)))
-		choose := a.choose
-		if choose == nil {
-			choose = a.Gateway.SelectAccountWithSchedulerForCapability
-		}
-		selection, scheduleDecision, err := choose(
-			ctx,
-			req.GroupID,
-			req.PreviousResponseID,
-			sessionHash,
-			req.ForwardModel,
-			req.Excluded,
-			transportOrAny(req.Transport),
-			req.RequiredCapability,
-			req.RequireCompact,
-			false,
-			!req.ImageIntent,
-			req.RequestPlatform,
+		var (
+			selection        *service.AccountSelectionResult
+			scheduleDecision service.OpenAIAccountScheduleDecision
+			err              error
 		)
+		if req.ImagesCapability != "" {
+			selection, scheduleDecision, err = a.Gateway.SelectAccountWithSchedulerForImages(ctx, req.GroupID, sessionHash, req.ForwardModel, req.Excluded, req.ImagesCapability)
+		} else {
+			choose := a.choose
+			if choose == nil {
+				choose = a.Gateway.SelectAccountWithSchedulerForCapability
+			}
+			selection, scheduleDecision, err = choose(
+				ctx,
+				req.GroupID,
+				req.PreviousResponseID,
+				sessionHash,
+				req.ForwardModel,
+				req.Excluded,
+				transportOrAny(req.Transport),
+				req.RequiredCapability,
+				req.RequireCompact,
+				false,
+				!req.ImageIntent,
+				req.RequestPlatform,
+			)
+		}
 		if err != nil {
 			return OpenAISelectOutcome{Kind: OpenAISelectFailed, Ctx: ctx, SessionHash: sessionHash, Err: err}
 		}

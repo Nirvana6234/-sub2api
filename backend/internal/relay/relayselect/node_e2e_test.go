@@ -211,6 +211,10 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 				`"usage":{"input_tokens":5,"output_tokens":3}}`)
 			return
 		}
+		if strings.HasSuffix(r.URL.Path, "/images/generations") {
+			_, _ = io.WriteString(w, `{"created":1700000000,"data":[{"b64_json":"AAAA"}],"usage":{"input_tokens":5,"output_tokens":3,"total_tokens":8}}`)
+			return
+		}
 		if strings.HasSuffix(r.URL.Path, "/embeddings") {
 			_, _ = io.WriteString(w, `{"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.1,0.2]}],"model":"text-embedding-3-small",`+
 				`"usage":{"prompt_tokens":5,"total_tokens":5}}`)
