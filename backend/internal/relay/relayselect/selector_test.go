@@ -477,6 +477,12 @@ func TestAdmit(t *testing.T) {
 	require.Equal(t, int32(401), rej.GetStatus())
 	require.JSONEq(t, `{"code":"INVALID_API_KEY","message":"Invalid API key"}`, string(rej.GetBody()))
 
+	// Gemini 原生入口（/v1beta）的拒绝按 Google 格式写。
+	googleResp, err := w.sel.Admit(ctx, testNode, &relayv1.AdmitRequest{Credential: &relayv1.AdmitRequest_ApiKey{ApiKey: "sk-nope"}, ClientIp: "5.6.7.8", Method: "POST", Path: "/v1beta/models/gemini-2.5-pro:generateContent"})
+	require.NoError(t, err)
+	require.Equal(t, int32(401), googleResp.GetRejection().GetStatus())
+	require.JSONEq(t, `{"error":{"code":401,"message":"Invalid API key","status":"UNAUTHENTICATED"}}`, string(googleResp.GetRejection().GetBody()))
+
 	// Anthropic 分组照常准入（哪个入口接由从节点的路由按分组平台分）；还没接入的平台回"暂不支持"。
 	require.NotNil(t, admit("sk-anthropic").GetAdmission())
 	gemini := openAIGroup(10)

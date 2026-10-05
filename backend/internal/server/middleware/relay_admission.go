@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 )
@@ -43,6 +44,9 @@ type RelayAPIKeyAdmissionInput struct {
 	Settings *service.SettingService
 	// Models 是请求里可能被下游解析到的全部模型名（从节点按分组白名单中间件的规则提取）。
 	Models []string
+	// Google：Gemini 原生入口（/v1beta、/antigravity/v1beta），错误按 Google 格式写，鉴权按
+	// APIKeyAuthWithSubscriptionGoogle（简易模式不查计费；未分组拦截按 requireGroupGoogle）。
+	Google bool
 	// AutoGroup 给自动分组 Key 定这次请求用的分组（本地 autoGroupModelRoutingMiddleware 那一步）：返回换好分组的
 	// Key 快照；返回的 Key 与传入的分组相同表示保留鉴权时的冷启动分组。nil 时自动分组 Key 回"暂不支持"。
 	AutoGroup func(ctx context.Context, apiKey *service.APIKey) (*service.APIKey, error)
@@ -73,7 +77,27 @@ func EvaluateRelayAPIKeyAdmission(ctx context.Context, in RelayAPIKeyAdmissionIn
 		}
 	}
 
+	authRejection := abortWithAPIKeyAuthRejection
+	unassignedWriter := AnthropicErrorWriter
+	if in.Google {
+		authRejection, unassignedWriter = abortWithGoogleAPIKeyAuthRejection, GoogleErrorWriter
+	}
+
 	apiKey, err := in.APIKeys.GetByKey(ctx, in.RawKey)
+	if err != nil && in.Google {
+		return RelayAPIKeyAdmission{}, capture(func(c *gin.Context) {
+			switch {
+			case errors.Is(err, service.ErrAPIKeyNotFound):
+				MarkIngressRejected(c, IngressRejectInvalidAPIKey)
+				abortWithGoogleError(c, 401, "Invalid API key")
+			case errors.Is(err, service.ErrAPIKeyAuthOverloaded):
+				MarkIngressRejected(c, IngressRejectAPIKeyAuthOverloaded)
+				abortWithGoogleError(c, http.StatusServiceUnavailable, "API key authentication is temporarily unavailable")
+			default:
+				abortWithGoogleError(c, 500, "Failed to validate API key")
+			}
+		}), nil
+	}
 	if err != nil {
 		return RelayAPIKeyAdmission{}, capture(func(c *gin.Context) {
 			switch {
@@ -92,11 +116,17 @@ func EvaluateRelayAPIKeyAdmission(ctx context.Context, in RelayAPIKeyAdmissionIn
 	}
 	in.APIKey = apiKey
 	if r := EvaluateAPIKeyAuthentication(in.APIKeyAuthInput); r != nil {
-		return RelayAPIKeyAdmission{}, capture(func(c *gin.Context) { abortWithAPIKeyAuthRejection(c, r) }), nil
+		return RelayAPIKeyAdmission{}, capture(func(c *gin.Context) { authRejection(c, r) }), nil
 	}
-	billing, r := EvaluateAPIKeyBilling(ctx, in.APIKeyAuthInput)
-	if r != nil {
-		return RelayAPIKeyAdmission{}, capture(func(c *gin.Context) { abortWithAPIKeyAuthRejection(c, r) }), nil
+	var billing APIKeyBillingDecision
+	if in.Google && in.Config != nil && in.Config.RunMode == config.RunModeSimple {
+		// Gemini 入口的鉴权在简易模式下直接放行（不查余额、订阅，也没有贡献房间的限定）。
+	} else {
+		var r *APIKeyAuthRejection
+		billing, r = EvaluateAPIKeyBilling(ctx, in.APIKeyAuthInput)
+		if r != nil {
+			return RelayAPIKeyAdmission{}, capture(func(c *gin.Context) { authRejection(c, r) }), nil
+		}
 	}
 
 	if in.Settings != nil {
@@ -142,9 +172,20 @@ func EvaluateRelayAPIKeyAdmission(ctx context.Context, in RelayAPIKeyAdmissionIn
 		}
 	}
 	if apiKey.GroupID == nil && (in.Settings == nil || !in.Settings.IsUngroupedKeySchedulingAllowed(ctx)) {
-		return RelayAPIKeyAdmission{}, capture(func(c *gin.Context) { abortGroupUnassigned(c, AnthropicErrorWriter) }), nil
+		return RelayAPIKeyAdmission{}, capture(func(c *gin.Context) { abortGroupUnassigned(c, unassignedWriter) }), nil
 	}
 	return RelayAPIKeyAdmission{APIKey: apiKey, Billing: billing}, nil, nil
+}
+
+// abortWithGoogleAPIKeyAuthRejection 是 Gemini 入口的鉴权拒绝（Google 格式，运维标记同 abortWithAPIKeyAuthRejection）。
+func abortWithGoogleAPIKeyAuthRejection(c *gin.Context, r *APIKeyAuthRejection) {
+	if r.OpsReason != "" {
+		service.MarkOpsClientBusinessLimited(c, r.OpsReason)
+	}
+	if r.IngressReason != "" {
+		MarkIngressRejected(c, r.IngressReason)
+	}
+	abortWithGoogleError(c, r.Status, r.Message)
 }
 
 // WriteCapturedRejection 在从节点上写出主节点生成的拒绝：原样的状态码、响应头、响应体和运维标记。

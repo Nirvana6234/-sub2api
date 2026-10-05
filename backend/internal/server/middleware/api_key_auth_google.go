@@ -28,33 +28,8 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 			abortWithGoogleError(c, 429, "Too many invalid authentication attempts; retry later")
 			return
 		}
-		if apiKeyHeadersTooLarge(c) {
-			recordInvalidAuthFailure(c, apiKeyService)
-			MarkIngressRejected(c, IngressRejectInvalidAPIKey)
-			abortWithGoogleError(c, 401, "Invalid API key")
-			return
-		}
-		if v := strings.TrimSpace(c.Query("api_key")); v != "" {
-			recordInvalidAuthFailure(c, apiKeyService)
-			MarkIngressRejected(c, IngressRejectQueryAPIKeyDeprecated)
-			abortWithGoogleError(c, 400, "Query parameter api_key is deprecated. Use Authorization header or key instead.")
-			return
-		}
-		apiKeyString := extractAPIKeyForGoogle(c)
-		if apiKeyString == "" {
-			recordInvalidAuthFailure(c, apiKeyService)
-			if hasAPIKeyCredentialInput(c) {
-				MarkIngressRejected(c, IngressRejectInvalidAPIKey)
-			} else {
-				MarkIngressRejected(c, IngressRejectAPIKeyRequired)
-			}
-			abortWithGoogleError(c, 401, "API key is required")
-			return
-		}
-		if len(apiKeyString) > service.MaxAPIKeyCredentialBytes {
-			recordInvalidAuthFailure(c, apiKeyService)
-			MarkIngressRejected(c, IngressRejectInvalidAPIKey)
-			abortWithGoogleError(c, 401, "Invalid API key")
+		apiKeyString, ok := ExtractGoogleAPIKeyCredential(c, func() { recordInvalidAuthFailure(c, apiKeyService) })
+		if !ok {
 			return
 		}
 
@@ -216,6 +191,52 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 		_ = apiKeyService.TouchLastUsed(c.Request.Context(), apiKey.ID)
 		c.Next()
 	}
+}
+
+// IsGoogleRelayPath 是 Gemini 原生入口的路径（Google 格式的鉴权与错误）。
+func IsGoogleRelayPath(path string) bool {
+	return strings.HasPrefix(path, "/v1beta") || strings.HasPrefix(path, "/antigravity/v1beta")
+}
+
+// ExtractGoogleAPIKeyCredential 从 Gemini 原生入口的请求里取出 Key（顺序见 extractAPIKeyForGoogle），取不到或不合法时
+// 按 Google 格式写出拒绝并返回 false，写之前调用 onInvalid（无效鉴权计数，可为 nil）。本地 Google 鉴权中间件和主从分流
+// 从节点的准入中间件共用。
+func ExtractGoogleAPIKeyCredential(c *gin.Context, onInvalid func()) (string, bool) {
+	invalid := func() {
+		if onInvalid != nil {
+			onInvalid()
+		}
+	}
+	if apiKeyHeadersTooLarge(c) {
+		invalid()
+		MarkIngressRejected(c, IngressRejectInvalidAPIKey)
+		abortWithGoogleError(c, 401, "Invalid API key")
+		return "", false
+	}
+	if v := strings.TrimSpace(c.Query("api_key")); v != "" {
+		invalid()
+		MarkIngressRejected(c, IngressRejectQueryAPIKeyDeprecated)
+		abortWithGoogleError(c, 400, "Query parameter api_key is deprecated. Use Authorization header or key instead.")
+		return "", false
+	}
+	apiKeyString := extractAPIKeyForGoogle(c)
+	if apiKeyString == "" {
+		invalid()
+		if hasAPIKeyCredentialInput(c) {
+			MarkIngressRejected(c, IngressRejectInvalidAPIKey)
+		} else {
+			MarkIngressRejected(c, IngressRejectAPIKeyRequired)
+		}
+		abortWithGoogleError(c, 401, "API key is required")
+		return "", false
+	}
+	if len(apiKeyString) > service.MaxAPIKeyCredentialBytes {
+		invalid()
+		MarkIngressRejected(c, IngressRejectInvalidAPIKey)
+		abortWithGoogleError(c, 401, "Invalid API key")
+		return "", false
+	}
+	return apiKeyString, true
 }
 
 // extractAPIKeyForGoogle extracts API key for Google/Gemini endpoints.

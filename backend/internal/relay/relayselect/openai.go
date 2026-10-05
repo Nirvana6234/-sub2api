@@ -353,6 +353,7 @@ func (s *selector) admitAPIKey(ctx context.Context, rawKey, clientIP, method, pa
 		Settings:  s.deps.Settings,
 		Models:    models,
 		AutoGroup: s.resolveAutoGroup(auto),
+		Google:    middleware.IsGoogleRelayPath(path),
 	})
 	if errors.Is(err, middleware.ErrRelayAdmissionUnsupported) {
 		return adm, unsupported(), nil

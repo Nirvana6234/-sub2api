@@ -24,7 +24,13 @@ import (
 func (d *Dispatcher) AdmitMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// TODO(WP11)：无效鉴权防刷计数（本地在 Redis）还没接到从节点。
-		rawKey, ok := middleware2.ExtractAPIKeyCredential(c, nil)
+		google := middleware2.IsGoogleRelayPath(c.Request.URL.Path)
+		extract := middleware2.ExtractAPIKeyCredential
+		if google {
+			// Gemini 原生入口按本地 Google 鉴权的规则取 Key、写错误（x-goog-api-key 优先，/v1beta 的查询参数 key 可用）。
+			extract = middleware2.ExtractGoogleAPIKeyCredential
+		}
+		rawKey, ok := extract(c, nil)
 		if !ok {
 			return
 		}
@@ -37,6 +43,11 @@ func (d *Dispatcher) AdmitMiddleware() gin.HandlerFunc {
 		if err != nil {
 			slog.Warn("relay admit failed", "error", err)
 			middleware2.MarkIngressRejected(c, middleware2.IngressRejectAPIKeyAuthOverloaded)
+			if google {
+				middleware2.GoogleErrorWriter(c, http.StatusServiceUnavailable, "API key authentication is temporarily unavailable")
+				c.Abort()
+				return
+			}
 			middleware2.AbortWithError(c, http.StatusServiceUnavailable, "API_KEY_AUTH_OVERLOADED", "API key authentication is temporarily unavailable")
 			return
 		}
