@@ -556,6 +556,19 @@ macOS 的版本由后台设置 `client_latest_version_mac` 单独控制（当前
 - 取舍：模型选择器按官方语义（只列映射内模型）；Responses 探测遇 model-not-found 不再落标。
 - 匿名 `/payment/public/orders/verify` 仍保持本地的「必须登录」，未采用官方的限流匿名方案。
 
+**r4（同日）无价拒绝 + Jev 对齐**：二进制 `sub2api-20261005-upstream-0.2.13-r2`（`1b4d8cced`），SHA256
+`2d37763c6b1b9aabc6bc76e2585531c8a5aab396f8216328dd67d8ededf3a130`，无迁移。
+
+- **兜底价格文件**：容器镜像里的 `/app/resources/model-pricing/model_prices_and_context_window.json` 是 8 月的旧快照，
+  6 个 gemini 模型缓存价缺基础价（启动告警的真正来源；线上目录 `data/model_pricing.json` 本来就有，实际计费没少收）。
+  现已把仓库里的新快照放到 `/opt/sub2api/resources/` 并在 compose 里只读挂载，告警消失。**以后更新快照要同步这份文件。**
+- **无价拒绝**：`service.CheckBillablePricing` 在文本端点入口（Messages / Chat Completions / Responses / Gemini）确认有价可收，
+  否则 503 `Pricing is not configured for this model`。放行：显式渠道/分组定价、非 token 计费、目录单价大于 0、
+  分组倍率为 0、图片/视频模型。目录里缺基础价的 cache above 档条目整条排除并打 ERROR。
+  上线前核对过：近 14 天用量没有 `total_cost=0` 的 token 请求。
+- **Jev 对齐官方**：结构校验、用户并发槽、在途预留、利润控制终检、换号状态机、composite 分组、响应校验；
+  保留本地的不审计提示词、按标价入账、4xx 原样回客户端、默认模型列表。
+
 ## B5. 回滚
 
 bind mount 模式：把 compose 里挂载的文件名改回上一个二进制，重跑 B3 最后那条命令即可。
