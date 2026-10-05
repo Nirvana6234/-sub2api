@@ -58,13 +58,29 @@ func NewOpenAIHandler(d GatewayDeps) *handler.OpenAIGatewayHandler {
 	return h
 }
 
+// RouteOption 是 RegisterRoutes 的可选部件。
+type RouteOption func(*routeOptions)
+
+type routeOptions struct {
+	asyncImages *handler.AsyncImageHandler
+}
+
+// WithAsyncImages 注册异步图片任务的提交与查询入口（nil 时这些入口交给主节点）。
+func WithAsyncImages(h *handler.AsyncImageHandler) RouteOption {
+	return func(o *routeOptions) { o.asyncImages = h }
+}
+
 // RegisterRoutes 注册从节点的网关路由。已接入的是 OpenAI 分组的 Responses（含 WebSocket）、Chat Completions、Messages；
 // 其余请求原样交给主节点转发（开发计划 WP10 逐步接入）。中间件链对照本地 /v1 网关链（routes/gateway.go）：
 // 全局 IP 黑名单、Key 鉴权、用户黑名单、未分组拦截合成准入中间件；自动分组、组合平台按模型问主节点
 // （AutoGroupMiddleware、CompositeRouteMiddleware）；TypeSafe 等还没接入的分组在准入时回"暂不支持"。
 //
 // gh 是 Anthropic 分组的 Messages 处理函数（NewAnthropicHandler）；nil 时 Anthropic 分组交给主节点转发。
-func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatcher, cfg *config.Config, gh *handler.GatewayHandler) {
+func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatcher, cfg *config.Config, gh *handler.GatewayHandler, opts ...RouteOption) {
+	var ro routeOptions
+	for _, opt := range opts {
+		opt(&ro)
+	}
 	bodyLimit := middleware2.RequestBodyLimit(cfg.Gateway.MaxBodySize)
 	chain := []gin.HandlerFunc{
 		bodyLimit,
@@ -157,6 +173,12 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 		g.POST("/chat/completions", chatCompletions)
 		g.POST("/images/generations", images)
 		g.POST("/images/edits", images)
+		if ro.asyncImages != nil {
+			// 异步图片任务：提交在本机执行，任务状态在主节点；轮询落在任何节点都向主节点查。
+			g.POST("/images/generations/async", ro.asyncImages.Submit)
+			g.POST("/images/edits/async", ro.asyncImages.Submit)
+			g.GET("/images/tasks/:task_id", ro.asyncImages.Get)
+		}
 		// Grok 视频（创建、编辑、延伸、状态、内容；本地 routes/gateway.go 的 video*Handler）。
 		grok := func(next gin.HandlerFunc) gin.HandlerFunc { return onPlatform(service.PlatformGrok, next) }
 		g.POST("/videos", grok(h.GrokVideoGeneration))

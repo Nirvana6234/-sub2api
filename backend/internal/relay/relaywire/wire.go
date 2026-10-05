@@ -56,6 +56,7 @@ func ProvideMasterRuntime(
 	antigravity *service.AntigravityGatewayService,
 	gemini *service.GeminiMessagesCompatService,
 	grokQuota *service.GrokQuotaService,
+	imageTasks *service.ImageTaskService,
 ) *master.Runtime {
 	// 用户、分组、订阅作废时发布改动（平台配额在仓储层已接好，见 repository/wire.go）。
 	service.AttachAccessChangeHub(accessChanges, apiKeys, billing)
@@ -73,7 +74,7 @@ func ProvideMasterRuntime(
 			Config: cfg, APIKeys: apiKeys, Subscriptions: subscriptions, Settings: settingService,
 			Billing: billing, Gateway: gateway, AnthropicGateway: anthropicGateway, Concurrency: concurrency,
 			UserMsgQueue: userMsgQueue, RPM: rpm, Antigravity: antigravity, Gemini: gemini,
-			Moderation: moderation, Composite: composite, Ops: ops, Users: users, MediaEligibility: grokQuota,
+			Moderation: moderation, Composite: composite, Ops: ops, Users: users, MediaEligibility: grokQuota, ImageTasks: imageTasks,
 		}),
 		VoucherPartitions: repository.NewRelayVoucherPartitions(db),
 		Sections:          forwardingSections(errorPassthrough, tlsProfiles),

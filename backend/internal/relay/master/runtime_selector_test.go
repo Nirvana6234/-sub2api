@@ -58,6 +58,10 @@ func (s *recordingSelector) ModerationNotify(context.Context, int64, *relayv1.Mo
 	return &relayv1.ModerationNotifyResponse{}, nil
 }
 
+func (s *recordingSelector) ImageTask(context.Context, int64, *relayv1.ImageTaskRequest) (*relayv1.ImageTaskResponse, error) {
+	return &relayv1.ImageTaskResponse{}, nil
+}
+
 func (s *recordingSelector) ReportWebSearchUsage(context.Context, int64, *relayv1.WebSearchUsageReport) (*relayv1.WebSearchUsageShares, error) {
 	return &relayv1.WebSearchUsageShares{}, nil
 }

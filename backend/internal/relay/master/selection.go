@@ -53,6 +53,8 @@ type Selector interface {
 	RecordFlaggedHash(ctx context.Context, nodeID int64, req *relayv1.RecordFlaggedHashRequest) (*relayv1.RecordFlaggedHashResponse, error)
 	// ReportWebSearchUsage 联网搜索用量汇总（设计 3.3）。
 	ReportWebSearchUsage(ctx context.Context, nodeID int64, req *relayv1.WebSearchUsageReport) (*relayv1.WebSearchUsageShares, error)
+	// ImageTask 异步图片任务（设计 14）。用户不是这台节点最近准入过的返回 PermissionDenied。
+	ImageTask(ctx context.Context, nodeID int64, req *relayv1.ImageTaskRequest) (*relayv1.ImageTaskResponse, error)
 	// Release 处理事件连接上的释放消息（不回复，按选号 ID 幂等）。在事件流的接收协程里调用，
 	// 不能阻塞：要访问 Redis 等的工作放到自己的协程里做。
 	Release(nodeID int64, rel *relayv1.SelectionRelease)
@@ -356,6 +358,19 @@ func (c *Control) ReportWebSearchUsage(ctx context.Context, req *relayv1.WebSear
 	resp, err := c.selector.ReportWebSearchUsage(ctx, nodeID, req)
 	if err != nil {
 		return nil, selectionError(ctx, "report_web_search_usage", nodeID, err)
+	}
+	return resp, nil
+}
+
+// ImageTask 异步图片任务：状态查询、创建、取结果、报结果。
+func (c *Control) ImageTask(ctx context.Context, req *relayv1.ImageTaskRequest) (*relayv1.ImageTaskResponse, error) {
+	nodeID, err := c.selectPeer(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.selector.ImageTask(ctx, nodeID, req)
+	if err != nil {
+		return nil, selectionError(ctx, "image_task", nodeID, err)
 	}
 	return resp, nil
 }

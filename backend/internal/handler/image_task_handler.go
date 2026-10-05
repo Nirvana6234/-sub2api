@@ -20,13 +20,29 @@ import (
 	"go.uber.org/zap"
 )
 
+// AsyncImageTasks 是异步图片任务的存取（单机是 *service.ImageTaskService；从节点是经主节点的实现，任务状态在主节点）。
+type AsyncImageTasks interface {
+	Enabled() bool
+	Pollable() bool
+	ExecutionTimeout() time.Duration
+	Create(ctx context.Context, owner service.ImageTaskOwner) (*service.ImageTask, error)
+	Get(ctx context.Context, owner service.ImageTaskOwner, id string) (*service.ImageTask, error)
+	Complete(ctx context.Context, id string, statusCode int, result json.RawMessage) error
+	Fail(ctx context.Context, id string, statusCode int, taskErr json.RawMessage) error
+}
+
 type AsyncImageHandler struct {
-	tasks   *service.ImageTaskService
+	tasks   AsyncImageTasks
 	openAI  *OpenAIGatewayHandler
 	execute func(platform string, c *gin.Context)
 }
 
 func NewAsyncImageHandler(tasks *service.ImageTaskService, openAI *OpenAIGatewayHandler) *AsyncImageHandler {
+	return NewAsyncImageHandlerWithTasks(tasks, openAI)
+}
+
+// NewAsyncImageHandlerWithTasks 用指定的任务存取构造（从节点用经主节点的实现）。
+func NewAsyncImageHandlerWithTasks(tasks AsyncImageTasks, openAI *OpenAIGatewayHandler) *AsyncImageHandler {
 	h := &AsyncImageHandler{tasks: tasks, openAI: openAI}
 	h.execute = h.executeWithGateway
 	return h

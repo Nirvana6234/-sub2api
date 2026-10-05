@@ -419,7 +419,7 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 		AccountState: node.NewRemoteAccountState(decider, reporter), TempUnschedulable: reporter.TempUnschedulable, MaskedSession: reporter.MaskedSession, Reporter: reporter,
 	})
 	r := nodegw.NewEngine()
-	nodegw.RegisterRoutes(r, h, d, nodeCfg, gh)
+	nodegw.RegisterRoutes(r, h, d, nodeCfg, gh, nodegw.WithAsyncImages(handler.NewAsyncImageHandlerWithTasks(nodegw.NewRemoteImageTasks(client), h)))
 	e.gateway = httptest.NewServer(r)
 	t.Cleanup(e.gateway.Close)
 	return e

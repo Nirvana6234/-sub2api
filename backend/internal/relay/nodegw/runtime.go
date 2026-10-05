@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/model"
 	"github.com/Wei-Shaw/sub2api/internal/relay/accountcodec"
 	"github.com/Wei-Shaw/sub2api/internal/relay/identity"
@@ -210,7 +211,7 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 		}
 		c.Next()
 	})
-	RegisterRoutes(r, h, d, cfg, gh)
+	RegisterRoutes(r, h, d, cfg, gh, WithAsyncImages(handler.NewAsyncImageHandlerWithTasks(NewRemoteImageTasks(client), h)))
 
 	srv := &http.Server{
 		Addr:              net.JoinHostPort(cfg.Server.Host, strconv.Itoa(cfg.Server.Port)),

@@ -117,6 +117,9 @@ service RelayControl {
   // 上次确认以来新用的次数，主节点加进全局计数，回每个服务当前的上限、已用和这台可用的份额（剩余按在线节点分摊）。
   // 带幂等键：回复丢了重发同一份，只加一次。
   rpc ReportWebSearchUsage(WebSearchUsageReport) returns (WebSearchUsageShares);
+  // 异步图片任务（设计 14）：任务状态在主节点（Redis），从节点接到提交后登记、执行完报结果，轮询落在任何节点都向主节点查。
+  // 结果里的图片由主节点转存到对象存储（从节点不持有对象存储凭据）。创建、取结果、报结果只认这台节点最近准入过的用户。
+  rpc ImageTask(ImageTaskRequest) returns (ImageTaskResponse);
 }
 
 // 扣费连接：扣费批次（设计 5.1、5.2，开发计划 WP8）。
@@ -1031,6 +1034,39 @@ message RecordFlaggedHashResponse {}
 message WebSearchUsageReport {
   // 搜索服务类型 -> 上次确认以来这台新用的次数。
   map<string, int64> used = 1;
+}
+
+message ImageTaskRequest {
+  enum Op {
+    OP_UNSPECIFIED = 0;
+    // 查功能状态（是否启用、能否轮询、执行超时）：从节点缓存起来用。
+    OP_STATUS = 1;
+    OP_CREATE = 2;
+    OP_GET = 3;
+    // 任务执行完成：payload 是转发响应的 JSON（主节点转存图片后落库）。
+    OP_COMPLETE = 4;
+    // 任务失败：payload 是错误的 JSON。
+    OP_FAIL = 5;
+  }
+  Op op = 1;
+  int64 user_id = 2;
+  int64 api_key_id = 3;
+  string task_id = 4;
+  int32 http_status = 5;
+  bytes payload = 6;
+}
+
+message ImageTaskResponse {
+  bool enabled = 1;
+  bool pollable = 2;
+  int64 execution_timeout_ms = 3;
+  // 任务的公开视图（service.ImageTask 的 JSON）：创建、查询时有。
+  bytes task_json = 4;
+  // 非空表示操作失败：service 的错误原因（IMAGE_TASK_NOT_FOUND、IMAGE_TASK_FORBIDDEN、IMAGE_TASK_UNAVAILABLE），
+  // error_status 是对应的 HTTP 状态码，error_message 是消息。
+  string error_reason = 5;
+  int32 error_status = 6;
+  string error_message = 7;
 }
 
 message WebSearchUsageShares {

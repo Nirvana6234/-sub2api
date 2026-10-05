@@ -53,6 +53,8 @@ type Deps struct {
 	Ops *service.OpsService
 	// Users 取违规通知的收件人（主节点库里的用户邮箱）；nil 时不发信。
 	Users service.UserRepository
+	// ImageTasks 是异步图片任务服务（任务状态在主节点的 Redis，结果转存到对象存储）；nil 时这个功能不可用。
+	ImageTasks *service.ImageTaskService
 	// MediaEligibility 探测 Grok 账号有没有媒体生成资格（billing_unobserved 时）；nil 时这种账号按没有资格。
 	MediaEligibility MediaEligibility
 }

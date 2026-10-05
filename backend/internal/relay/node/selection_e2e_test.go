@@ -91,6 +91,10 @@ func (f *fakeSelector) ModerationNotify(context.Context, int64, *relayv1.Moderat
 	return &relayv1.ModerationNotifyResponse{}, nil
 }
 
+func (f *fakeSelector) ImageTask(context.Context, int64, *relayv1.ImageTaskRequest) (*relayv1.ImageTaskResponse, error) {
+	return &relayv1.ImageTaskResponse{}, nil
+}
+
 func (f *fakeSelector) ReportWebSearchUsage(context.Context, int64, *relayv1.WebSearchUsageReport) (*relayv1.WebSearchUsageShares, error) {
 	return &relayv1.WebSearchUsageShares{}, nil
 }
