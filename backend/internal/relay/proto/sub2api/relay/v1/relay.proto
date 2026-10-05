@@ -525,6 +525,8 @@ enum SelectEndpoint {
   // 账号槽排队不计排队数（本地这两个处理函数直接等槽）；错误按 OpenAI 兼容格式由从节点写。
   SELECT_ENDPOINT_GATEWAY_RESPONSES = 8;
   SELECT_ENDPOINT_GATEWAY_CHAT = 9;
+  // OpenAI 分组的 /v1/embeddings（OpenAIGatewayHandler.Embeddings）：只走 HTTP/SSE、没有会话、没有 cyber 屏蔽，选号按 Embeddings 能力。
+  SELECT_ENDPOINT_OPENAI_EMBEDDINGS = 10;
 }
 
 message AdmitRequest {

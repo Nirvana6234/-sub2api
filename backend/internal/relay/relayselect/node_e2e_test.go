@@ -211,6 +211,11 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 				`"usage":{"input_tokens":5,"output_tokens":3}}`)
 			return
 		}
+		if strings.HasSuffix(r.URL.Path, "/embeddings") {
+			_, _ = io.WriteString(w, `{"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.1,0.2]}],"model":"text-embedding-3-small",`+
+				`"usage":{"prompt_tokens":5,"total_tokens":5}}`)
+			return
+		}
 		if strings.HasSuffix(r.URL.Path, "/chat/completions") {
 			_, _ = io.WriteString(w, `{"id":"chatcmpl-e2e","object":"chat.completion","model":"gpt-5",`+
 				`"choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],`+
@@ -312,6 +317,7 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 	e.client, e.nodeID = client, n.ID
 	nodeCfg := &config.Config{}
 	nodeCfg.Gateway.MaxBodySize = 10 << 20
+	nodeCfg.Gateway.TextMaxBodySize = 10 << 20
 	nodeCfg.Security.URLAllowlist.AllowInsecureHTTP = true // 假上游是 http://127.0.0.1
 	if configure != nil {
 		configure(nodeCfg)

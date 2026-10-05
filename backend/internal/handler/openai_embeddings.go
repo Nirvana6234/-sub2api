@@ -84,28 +84,37 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 		return
 	}
 
-	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
+	// 从节点：渠道映射在主节点选号时做。
+	var channelMapping service.ChannelMappingResult
+	if h.relay == nil {
+		channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
+	}
 	forwardModel := openAIChannelForwardModel(channelMapping, reqModel)
 
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
 
-	userReleaseFunc, acquired := h.acquireResponsesUserSlot(c, subject.UserID, subject.Concurrency, false, &streamStarted, reqLog)
-	if !acquired {
-		return
-	}
-	if userReleaseFunc != nil {
-		defer userReleaseFunc()
-	}
-
-	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
-		reqLog.Info("openai_embeddings.billing_check_failed", zap.Error(err))
-		status, code, message, retryAfter := billingErrorDetails(err)
-		if retryAfter > 0 {
-			c.Header("Retry-After", strconv.Itoa(retryAfter))
+	// 从节点：用户并发槽和计费资格在主节点第一次选号时做。
+	if h.relay != nil {
+		defer h.relay.RequestDone(c)
+	} else {
+		userReleaseFunc, acquired := h.acquireResponsesUserSlot(c, subject.UserID, subject.Concurrency, false, &streamStarted, reqLog)
+		if !acquired {
+			return
 		}
-		h.errorResponse(c, status, code, message)
-		return
+		if userReleaseFunc != nil {
+			defer userReleaseFunc()
+		}
+
+		if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+			reqLog.Info("openai_embeddings.billing_check_failed", zap.Error(err))
+			status, code, message, retryAfter := billingErrorDetails(err)
+			if retryAfter > 0 {
+				c.Header("Retry-After", strconv.Itoa(retryAfter))
+			}
+			h.errorResponse(c, status, code, message)
+			return
+		}
 	}
 
 	profitVetoCount := 0
@@ -120,23 +129,74 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 	routingStart := time.Now()
 
 	// 分组利润控制：embeddings 文本入口请求级装门并固定 pricingAt。
-	embPricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
-	c.Request = c.Request.WithContext(embPricingCtx)
+	// 从节点：计价在主节点。
+	var embPricingCtx context.Context
+	var pricingAt time.Time
+	if h.relay == nil {
+		embPricingCtx, pricingAt = h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
+		c.Request = c.Request.WithContext(embPricingCtx)
+	}
+	var relayAttempt *OpenAIRelayAttempt
 
 	for {
-		selection, _, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
-			c.Request.Context(),
-			apiKey.GroupID,
-			"",
-			"",
-			forwardModel,
-			failedAccountIDs,
-			service.OpenAIUpstreamTransportHTTPSSE,
-			service.OpenAIEndpointCapabilityEmbeddings,
-			false,
-			false,
-			true,
-		)
+		var outcome OpenAISelectOutcome
+		if h.relay != nil {
+			res := h.relay.Select(c, OpenAIRelaySelectRequest{Embeddings: true, APIKey: apiKey, Model: reqModel, Excluded: failedAccountIDs})
+			if res.Rejection != nil && !res.Rejection.AutoGroupFailover {
+				h.writeOpenAIRelayRejection(c, res.Rejection, apiKey, reqModel, cyberBlockFormatChat, lastFailoverErr, false, reqLog)
+				return
+			}
+			if res.Rejection != nil {
+				// 本地这时先换到下一个候选分组再试：照本地选号失败的分支走（没换成时按这个拒绝写）。
+				outcome = relayAutoGroupFailoverOutcome(c, res.Rejection, "")
+			} else {
+				relayAttempt = res.Attempt
+				channelMapping = relayAttempt.ChannelMapping
+				forwardModel = relayAttempt.ForwardModel
+				maxAccountSwitches = relayAttempt.MaxAccountSwitches
+				setOpsSelectedAccount(c, relayAttempt.Account.ID, relayAttempt.Account.Platform)
+				outcome = h.relayAttemptOutcome(c, relayAttempt)
+			}
+		} else {
+			// 选号与准入（与主节点的选号共用 OpenAIAccountAdmitter）：Embeddings 只走 HTTP/SSE，没有会话。
+			selectState := OpenAISelectState{ProfitVetoCount: profitVetoCount}
+			outcome = OpenAIAccountAdmitter{Gateway: h.gatewayService, Concurrency: h.concurrencyHelper}.SelectAndAdmit(c.Request.Context(), OpenAISelectRequest{
+				GroupID:            apiKey.GroupID,
+				ForwardModel:       forwardModel,
+				RequestPlatform:    service.PlatformOpenAI,
+				RequiredCapability: service.OpenAIEndpointCapabilityEmbeddings,
+				Transport:          service.OpenAIUpstreamTransportHTTPSSE,
+				Excluded:           failedAccountIDs,
+				OnAccountChosen: func(_ context.Context, selection *service.AccountSelectionResult) context.Context {
+					setOpsSelectedAccount(c, selection.Account.ID, selection.Account.Platform)
+					c.Request = c.Request.WithContext(service.ContextWithSelectionFallbackTrace(c.Request.Context(), selection))
+					return c.Request.Context()
+				},
+			}, &selectState, reqLog)
+			profitVetoCount = selectState.ProfitVetoCount
+		}
+		var err error
+		switch outcome.Kind {
+		case OpenAISelected:
+		case OpenAISelectAborted:
+			failoverClientGone(c)
+			return
+		case OpenAISelectVetoExhausted:
+			h.handleOpenAIProfitVetoExhausted(c, streamStarted, reqLog, profitVetoCount)
+			return
+		case OpenAISelectQueueFull, OpenAISelectSlotError, OpenAISelectNoWaitPlan:
+			h.writeOpenAIAdmissionFailure(c, outcome, streamStarted)
+			return
+		case OpenAISelectNone:
+			cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, service.PlatformOpenAI)
+			if !cls.ModelNotFound {
+				markOpsRoutingCapacityLimited(c)
+			}
+			h.errorResponse(c, cls.Status, cls.ErrType, cls.Message)
+			return
+		default:
+			err = outcome.Err
+		}
 		if err != nil {
 			if failoverClientGone(c) {
 				reqLog.Info("openai_embeddings.account_select_aborted_client_disconnected", zap.Error(err))
@@ -188,29 +248,8 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 			}
 			return
 		}
-		if selection == nil || selection.Account == nil {
-			cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, service.PlatformOpenAI)
-			if !cls.ModelNotFound {
-				markOpsRoutingCapacityLimited(c)
-			}
-			h.errorResponse(c, cls.Status, cls.ErrType, cls.Message)
-			return
-		}
-		account := selection.Account
-		setOpsSelectedAccount(c, account.ID, account.Platform)
-
-		accountReleaseFunc, slotResult := h.acquireResponsesAccountSlot(c, apiKey.GroupID, "", selection, false, &streamStarted, reqLog)
-		if slotResult == openAISlotAcquireProfitVetoed {
-			// 利润终检否决：排除该账号重新选号；否决次数达上限则按无可用账号终止。
-			if !recordOpenAIProfitVeto(failedAccountIDs, account.ID, &profitVetoCount) {
-				h.handleOpenAIProfitVetoExhausted(c, streamStarted, reqLog, profitVetoCount)
-				return
-			}
-			continue
-		}
-		if slotResult != openAISlotAcquireOK {
-			return
-		}
+		account := outcome.Account
+		accountReleaseFunc := wrapReleaseOnDone(outcome.Ctx, outcome.Release)
 
 		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
 		forwardStart := time.Now()
@@ -297,6 +336,14 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 		upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
 		quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 		sessionID := service.ExtractClientSessionID(c)
+
+		if h.relay != nil {
+			// 从节点：写进本地扣费队列，主节点按凭证用同一个 RecordUsage 入账。
+			h.relay.SubmitUsage(c, relayAttempt, OpenAIUsageFacts{
+				InboundEndpoint: inboundEndpoint, UpstreamEndpoint: upstreamEndpoint, UserAgent: userAgent, IPAddress: clientIP, SessionID: sessionID,
+			}, result)
+			return
+		}
 
 		h.submitOpenAIUsageRecordTask(c.Request.Context(), result, func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{

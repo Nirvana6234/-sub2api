@@ -26,7 +26,7 @@ func (s *selector) Select(ctx context.Context, nodeID int64, req *relayv1.Select
 	ws := false
 	switch req.GetEndpoint() {
 	case relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_RESPONSES, relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_CHAT,
-		relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_MESSAGES:
+		relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_MESSAGES, relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_EMBEDDINGS:
 	case relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_RESPONSES_WS:
 		ws = true
 	case relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_MESSAGES, relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_COUNT_TOKENS,
@@ -91,6 +91,7 @@ func requestContinues(r *relayv1.SelectRejection) bool {
 func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.SelectRequest) (*relayv1.SelectResponse, error) {
 	chat := req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_CHAT
 	messages := req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_MESSAGES
+	embeddings := req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_EMBEDDINGS
 	adm, rej, err := s.admitAPIKey(ctx, req.GetApiKey(), req.GetClientIp(), req.GetMethod(), req.GetPath(), modelCandidates(req),
 		autoGroupChoice{pinned: req.GetAutoGroupId()})
 	if err != nil || rej != nil {
@@ -128,9 +129,14 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 	previousResponseID, imageIntent := strings.TrimSpace(req.GetPreviousResponseId()), req.GetImageIntent()
 	legacyCompact, nativeV2 := req.GetLegacyCompact(), req.GetNativeCompactionV2()
 	capability := handler.OpenAIResponsesRequiredCapability(imageIntent, nativeV2 || legacyCompact, requestPlatform)
-	if chat || messages {
+	if chat || messages || embeddings {
 		previousResponseID, imageIntent, legacyCompact = "", false, false
 		capability = service.OpenAIEndpointCapabilityChatCompletions
+	}
+	transport := service.OpenAIUpstreamTransport("")
+	if embeddings {
+		// Embeddings 只走 HTTP/SSE，按 Embeddings 能力选，没有会话、没有 cyber 屏蔽。
+		capability, transport = service.OpenAIEndpointCapabilityEmbeddings, service.OpenAIUpstreamTransportHTTPSSE
 	}
 	if chat {
 		// Chat 在占用户槽之前查 cyber 屏蔽（本地 ChatCompletions 的顺序）。
@@ -181,7 +187,7 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 		}
 	}()
 	if first {
-		if rej := s.startRequest(ctx, record, req, adm, quotaReq, !chat, messages, nil); rej != nil {
+		if rej := s.startRequest(ctx, record, req, adm, quotaReq, !chat && !embeddings, messages, nil); rej != nil {
 			return rej, nil
 		}
 		record.groupID = groupID
@@ -211,6 +217,7 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 		ForwardModel:       forwardModel,
 		RequestPlatform:    requestPlatform,
 		RequiredCapability: capability,
+		Transport:          transport,
 		RequireCompact:     legacyCompact,
 		ImageIntent:        imageIntent,
 		Excluded:           record.excluded,
@@ -239,7 +246,9 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 			}}}, nil
 		}
 		var rej *relayv1.SelectResponse
-		if messages {
+		if embeddings {
+			rej = gatewayRejection(handler.OpenAIEmbeddingsFirstSelectFailureRejection(ctx, s.deps.Gateway, apiKey, reqModel, outcome.Err))
+		} else if messages {
 			rej = gatewayRejection(handler.OpenAIMessagesNoAccountRejection(ctx, s.deps.Gateway, apiKey, forwardModel, reqModel, requestPlatform, outcome.Err))
 		} else {
 			rej = gatewayRejection(handler.OpenAIFirstSelectFailureRejection(ctx, s.deps.Gateway, apiKey, reqModel, requestPlatform, legacyCompact, outcome.Err))

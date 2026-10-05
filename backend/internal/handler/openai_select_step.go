@@ -55,8 +55,10 @@ type OpenAISelectRequest struct {
 	ForwardModel       string
 	RequestPlatform    string
 	RequiredCapability service.OpenAIEndpointCapability
-	RequireCompact     bool
-	ImageIntent        bool
+	// Transport 为空时是 OpenAIUpstreamTransportAny（Embeddings 用 HTTP/SSE）。
+	Transport      service.OpenAIUpstreamTransport
+	RequireCompact bool
+	ImageIntent    bool
 	// Excluded 是本请求已排除的账号；续链不支持、利润否决的账号会被加进去（调用方的同一个 map）。
 	Excluded map[int64]struct{}
 	// OnTick、CannotWait 见 OpenAIAccountAdmitter.Admit。
@@ -88,6 +90,13 @@ type OpenAISelectOutcome struct {
 	Err error
 }
 
+func transportOrAny(t service.OpenAIUpstreamTransport) service.OpenAIUpstreamTransport {
+	if t == "" {
+		return service.OpenAIUpstreamTransportAny
+	}
+	return t
+}
+
 // SelectAndAdmit 是 Responses 选号循环里"选号 → 续链检查 → 准入 → 利润否决重选"这一段。
 // 本地的 Responses 处理函数和主从分流主节点的选号（relayselect）共用它，两边结果一致（开发计划 WP7）。
 // 它不写客户端响应：各种失败以 Kind 返回，由调用方按原来的格式写出。
@@ -109,7 +118,7 @@ func (a OpenAIAccountAdmitter) SelectAndAdmit(ctx context.Context, req OpenAISel
 			sessionHash,
 			req.ForwardModel,
 			req.Excluded,
-			service.OpenAIUpstreamTransportAny,
+			transportOrAny(req.Transport),
 			req.RequiredCapability,
 			req.RequireCompact,
 			false,

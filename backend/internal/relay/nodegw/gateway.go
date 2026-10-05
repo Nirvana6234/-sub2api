@@ -121,6 +121,7 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 		g.POST("/responses", responses)
 		g.POST("/responses/*subpath", responses)
 		g.POST("/chat/completions", chatCompletions)
+		g.POST("/embeddings", middleware2.RequestBodyLimit(cfg.Gateway.TextMaxBodySize), openAIOnly(h.Embeddings))
 		// Responses WebSocket（Codex）：与本地一样是 GET /responses 的升级请求。
 		g.GET("/responses", openAIOnly(h.ResponsesWebSocket))
 		if prefix == "/v1" {

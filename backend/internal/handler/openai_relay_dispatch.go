@@ -117,6 +117,9 @@ type OpenAIRelaySelectRequest struct {
 	// （GatewayHandler.Responses / ChatCompletions）。SessionHash 是调度用的会话键（Gemini 平台带 "gemini:" 前缀）。
 	GatewayResponses bool
 	GatewayChat      bool
+
+	// Embeddings：OpenAI 分组的 /v1/embeddings。
+	Embeddings bool
 }
 
 // OpenAIRelaySelectResult 是一次远程选号的结果：Attempt 与 Rejection 二选一。

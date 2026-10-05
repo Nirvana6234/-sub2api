@@ -185,3 +185,16 @@ func (h *GatewayHandler) compatAutoGroupBillingError(c *gin.Context, apiKey *ser
 	}
 	return nil
 }
+
+// OpenAIEmbeddingsFirstSelectFailureRejection：Embeddings 第一次就选不出账号时的错误（本地 Embeddings：只按模型不存在分类，
+// 文案取分类结果，不按限流诊断改写）。
+func OpenAIEmbeddingsFirstSelectFailureRejection(ctx context.Context, diag service.ModelAvailabilityDiagnoser, apiKey *service.APIKey, model string, selectErr error) OpenAIGatewayRejection {
+	cls := classifyNoAccountError(ctx, diag, apiKey, model, model, service.PlatformOpenAI)
+	r := OpenAIGatewayRejection{Status: cls.Status, ErrType: cls.ErrType, Message: cls.Message}
+	if cls.ModelNotFound {
+		r.OpsBusinessLimitedReason = service.OpsClientBusinessLimitedReasonLocalModelConfiguration
+	} else {
+		r.RoutingCapacityLimited = isOpsNoAvailableAccountError(selectErr)
+	}
+	return r
+}
