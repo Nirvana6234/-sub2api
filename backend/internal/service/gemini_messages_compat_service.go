@@ -3171,8 +3171,8 @@ func (s *GeminiMessagesCompatService) handleGeminiUpstreamError(ctx context.Cont
 				return
 			}
 			cooldown := geminiCooldownForTier(tierID)
-			if s.rateLimitService != nil {
-				cooldown = s.rateLimitService.GeminiCooldown(ctx, account)
+			if s.rateLimitService != nil { // relay:master-only 单机算档位冷却；从节点上面已经交给主节点
+				cooldown = s.rateLimitService.GeminiCooldown(ctx, account) // relay:master-only 同上
 			}
 			ra = time.Now().Add(cooldown)
 			if isCodeAssist {

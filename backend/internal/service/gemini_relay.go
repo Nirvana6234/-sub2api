@@ -22,8 +22,8 @@ func (s *GeminiMessagesCompatService) RelayGeminiCooldown(ctx context.Context, a
 		return nil
 	}
 	cooldown := geminiCooldownForTier(account.GeminiTierID())
-	if s.rateLimitService != nil {
-		cooldown = s.rateLimitService.GeminiCooldown(ctx, account)
+	if s.rateLimitService != nil { // relay:master-only 主节点执行从节点的档位冷却事件
+		cooldown = s.rateLimitService.GeminiCooldown(ctx, account) // relay:master-only 同上
 	}
 	return s.accountRepo.SetRateLimited(ctx, account.ID, clampRelayResetAt(time.Now().Add(cooldown)))
 }
