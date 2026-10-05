@@ -45,6 +45,10 @@ type Deps struct {
 	CyberEnabled func(ctx context.Context) bool
 	// HandOff 把请求交给主节点转发（见 handoff.go）；nil 时按 503 写。
 	HandOff func(c *gin.Context, body []byte)
+	// InvalidAuth 是无效鉴权防刷（同一来源 IP 鉴权失败太多时暂时拒绝，设计 8.2）；nil 不限。
+	InvalidAuth *service.InvalidAuthAbuseGuard
+	// KeyNegativeTTL 是"查不到的 Key"负缓存时间；0 用默认 30 秒，负数关闭。
+	KeyNegativeTTL time.Duration
 }
 
 // Dispatcher 实现 handler.OpenAIRelayDispatcher。
@@ -54,10 +58,14 @@ type Dispatcher struct {
 	scopes sync.Map // apiKeyID -> []node.QuotaScope
 	// pending 是已写进扣费队列、等主节点确认的预扣（按队列序号）。
 	pending sync.Map // seq -> *node.Reservation
+	// negKeys 是"查不到的 Key"负缓存（keycache.go）。
+	negKeys *negativeKeyCache
 }
 
 // NewDispatcher 创建分发。
-func NewDispatcher(deps Deps) *Dispatcher { return &Dispatcher{deps: deps} }
+func NewDispatcher(deps Deps) *Dispatcher {
+	return &Dispatcher{deps: deps, negKeys: newNegativeKeyCache(deps.KeyNegativeTTL, nil)}
+}
 
 var _ handler.OpenAIRelayDispatcher = (*Dispatcher)(nil)
 

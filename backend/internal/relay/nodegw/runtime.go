@@ -145,7 +145,9 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 	deps := Deps{
 		NodeID: id.NodeID, Select: selectClient, Quota: quota, Secrets: accountcodec.NewSecretCache(),
 		Open: id.OpenSealed, WAL: wal, Kick: sender.Kick, EnsureConfig: syncer.EnsureVersion,
-		AfterEpochChange: quotaSync.Report,
+		// 主节点重启（纪元变化）：作废推送可能漏了，Key 负缓存清空，再核对租约。
+		AfterEpochChange: func(ctx context.Context) error { d.ClearKeyCache(); return quotaSync.Report(ctx) },
+		InvalidAuth:      service.NewInvalidAuthAbuseGuard(cfg),
 	}
 	if u := strings.TrimSpace(rc.NodeMasterURL); u != "" {
 		masterURL, err := url.Parse(u)
@@ -164,9 +166,15 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 	go node.RunEvents(runCtx, client, syncer, node.EventHandlers{
 		Outbox:          outbox,
 		OnFlaggedHashes: moderation.Hashes.Apply,
+		// 主节点的缓存作废推送（新建 Key、Key 改动）：清 Key 负缓存。
+		OnInvalidation: d.OnInvalidation,
 		// 中转票据的吊销表（设计 8.1）：只用来提前拒绝，以主节点复查为准。
 		OnTicketRevocations: func(m *relayv1.TicketRevocations) { revocations.Apply(m, time.Now()) },
-		OnConnected:         moderation.Hashes.RunResyncOnConnect,
+		OnConnected: func(ctx context.Context) {
+			// 事件流（重新）连上：断开期间的作废推送收不到，Key 负缓存清空。
+			d.ClearKeyCache()
+			moderation.Hashes.RunResyncOnConnect(ctx)
+		},
 		OnQuotaRecall: func(rc *relayv1.QuotaRecall) {
 			if err := quotaSync.HandleRecall(runCtx, rc); err != nil {
 				slog.Warn("relay quota recall failed", "error", err)

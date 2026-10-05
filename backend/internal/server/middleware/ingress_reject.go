@@ -69,6 +69,22 @@ func recordInvalidAuthFailure(c *gin.Context, apiKeyService interface {
 	apiKeyService.RecordInvalidAuthFailure(invalidAuthClientKey(c))
 }
 
+// RejectInvalidAuthAbuse、RecordInvalidAuthFailure 给不走本地鉴权中间件的入口（从节点准入）用：
+// 同一个来源键（SecurityClientIP）、同一种标记（invalid_auth_rate_limited）与 Retry-After。
+// 被拒时返回 true，调用方按入口格式写 429。
+func RejectInvalidAuthAbuse(c *gin.Context, guard interface {
+	CheckInvalidAuthAbuse(string) (time.Duration, bool)
+}) bool {
+	return rejectInvalidAuthAbuse(c, guard)
+}
+
+// RecordInvalidAuthFailure 记一次无效鉴权（来源键同 RejectInvalidAuthAbuse）。
+func RecordInvalidAuthFailure(c *gin.Context, guard interface {
+	RecordInvalidAuthFailure(string)
+}) {
+	recordInvalidAuthFailure(c, guard)
+}
+
 type ingressRejectRecorderHolder struct{ recorder IngressRejectRecorder }
 
 var activeIngressRejectRecorder atomic.Pointer[ingressRejectRecorderHolder]

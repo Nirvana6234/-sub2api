@@ -81,6 +81,35 @@ func newInvalidAuthAbuseLimiter(cfg *config.Config) *invalidAuthAbuseLimiter {
 	return l
 }
 
+// InvalidAuthAbuseGuard 是不依赖 APIKeyService 的无效鉴权防刷（从节点没有 APIKeyService）：
+// 与 APIKeyService 用同一个限流器、同一组配置（api_key_auth_cache.invalid_abuse）。nil 不限。
+type InvalidAuthAbuseGuard struct{ l *invalidAuthAbuseLimiter }
+
+// NewInvalidAuthAbuseGuard 按配置创建；配置关闭或参数无效时返回 nil（不限）。
+func NewInvalidAuthAbuseGuard(cfg *config.Config) *InvalidAuthAbuseGuard {
+	l := newInvalidAuthAbuseLimiter(cfg)
+	if l == nil {
+		return nil
+	}
+	return &InvalidAuthAbuseGuard{l: l}
+}
+
+// CheckInvalidAuthAbuse 报告这个来源是否在被暂时拒绝中，以及还要多久。
+func (g *InvalidAuthAbuseGuard) CheckInvalidAuthAbuse(clientKey string) (time.Duration, bool) {
+	if g == nil {
+		return 0, false
+	}
+	return g.l.check(clientKey)
+}
+
+// RecordInvalidAuthFailure 记一次无效鉴权。
+func (g *InvalidAuthAbuseGuard) RecordInvalidAuthFailure(clientKey string) {
+	if g == nil {
+		return
+	}
+	g.l.record(clientKey)
+}
+
 func (s *APIKeyService) CheckInvalidAuthAbuse(clientKey string) (time.Duration, bool) {
 	if s == nil || s.invalidAuthAbuse == nil {
 		return 0, false

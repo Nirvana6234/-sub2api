@@ -23,15 +23,32 @@ import (
 // 请求体在这里读出并放回（交给主节点转发要用原始请求体）。
 func (d *Dispatcher) AdmitMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// TODO(WP11)：无效鉴权防刷计数（本地在 Redis）还没接到从节点。
 		google := middleware2.IsGoogleRelayPath(c.Request.URL.Path)
+		// 无效鉴权防刷（设计 8.2）：同一来源失败太多时本地直接拒绝，不去主节点；与本地鉴权中间件同一个计数、同一种写法。
+		if middleware2.RejectInvalidAuthAbuse(c, d.deps.InvalidAuth) {
+			if google {
+				middleware2.GoogleErrorWriter(c, http.StatusTooManyRequests, "Too many invalid authentication attempts; retry later")
+				c.Abort()
+				return
+			}
+			middleware2.AbortWithError(c, http.StatusTooManyRequests, "INVALID_AUTH_RATE_LIMITED", "Too many invalid authentication attempts; retry later")
+			return
+		}
+		onInvalid := func() { middleware2.RecordInvalidAuthFailure(c, d.deps.InvalidAuth) }
 		extract := middleware2.ExtractAPIKeyCredential
 		if google {
 			// Gemini 原生入口按本地 Google 鉴权的规则取 Key、写错误（x-goog-api-key 优先，/v1beta 的查询参数 key 可用）。
 			extract = middleware2.ExtractGoogleAPIKeyCredential
 		}
-		rawKey, ok := extract(c, nil)
+		rawKey, ok := extract(c, onInvalid)
 		if !ok {
+			return
+		}
+		// 负缓存：刚被主节点回过"查不到"的 Key，期间本地直接拒绝（每次仍算一次无效鉴权）。
+		hash := keyHash(rawKey)
+		if rej := d.negKeys.get(hash, google); rej != nil {
+			onInvalid()
+			middleware2.WriteCapturedRejection(c, capturedRejection(rej))
 			return
 		}
 		resp, err := d.deps.Select.Admit(c.Request.Context(), &relayv1.AdmitRequest{
@@ -52,6 +69,10 @@ func (d *Dispatcher) AdmitMiddleware() gin.HandlerFunc {
 			return
 		}
 		if r := resp.GetRejection(); r != nil && r.GetFormat() == relayv1.RejectionFormat_REJECTION_FORMAT_RAW {
+			if r.GetIngressRejectReason() == string(middleware2.IngressRejectInvalidAPIKey) && r.GetStatus() == http.StatusUnauthorized {
+				onInvalid()
+				d.negKeys.put(hash, google, r)
+			}
 			middleware2.WriteCapturedRejection(c, capturedRejection(r))
 			return
 		}

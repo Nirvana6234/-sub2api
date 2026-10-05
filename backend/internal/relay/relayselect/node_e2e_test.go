@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -92,6 +93,29 @@ type e2e struct {
 	records      *nodestore.Store
 	// revocations 是从节点的票据吊销表。
 	revocations *sign.RevocationList
+	// admits 是主节点收到的准入调用数；events 是主节点的事件中心（作废推送从它发）。
+	admits *atomic.Int64
+	events *master.EventHub
+}
+
+// countingSelector 数主节点收到的准入调用（验证从节点的负缓存挡住了多少）。
+type countingSelector struct {
+	master.Selector
+	admits *atomic.Int64
+}
+
+func (s countingSelector) Admit(ctx context.Context, nodeID int64, req *relayv1.AdmitRequest) (*relayv1.AdmitResponse, error) {
+	s.admits.Add(1)
+	return s.Selector.Admit(ctx, nodeID, req)
+}
+
+// testInvalidAuthAbuse 是端到端测试世界里从节点的无效鉴权防刷配置（nil 时不限）。用例用 useInvalidAuthAbuse 设置。
+var testInvalidAuthAbuse *config.InvalidAuthAbuseConfig
+
+func useInvalidAuthAbuse(t *testing.T, cfg config.InvalidAuthAbuseConfig) {
+	t.Helper()
+	testInvalidAuthAbuse = &cfg
+	t.Cleanup(func() { testInvalidAuthAbuse = nil })
 }
 
 // testPromptAudit 是端到端测试世界里主节点下发的提示词审计配置（nil 时不下发）。用例用 usePromptAudit 设置。
@@ -110,6 +134,13 @@ func useMasterSettings(t *testing.T, values map[string]string) {
 	t.Helper()
 	testMasterSettings = values
 	t.Cleanup(func() { testMasterSettings = nil })
+}
+
+func invalidAbuseOrZero(c *config.InvalidAuthAbuseConfig) config.InvalidAuthAbuseConfig {
+	if c == nil {
+		return config.InvalidAuthAbuseConfig{}
+	}
+	return *c
 }
 
 func startE2E(t *testing.T) *e2e {
@@ -131,7 +162,7 @@ func startE2EWith(t *testing.T, accounts func(upstreamURL string) []service.Acco
 func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts func(upstreamURL string) []service.Account) *e2e {
 	t.Helper()
 	ctx := context.Background()
-	e := &e2e{settler: &recordingSettler{}, hits: make(chan *http.Request, 16)}
+	e := &e2e{settler: &recordingSettler{}, hits: make(chan *http.Request, 16), admits: &atomic.Int64{}}
 
 	e.upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -295,6 +326,7 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 	}
 	nodes := master.NewNodes(store, ca, nil, master.NodesOptions{})
 	events := master.NewEventHub()
+	e.events = events
 	publisher := master.NewConfigPublisher(settings, store, events, func() master.Trust { return master.Trust{RootFingerprints: ca.RootFingerprints()} })
 	n, err := store.CreatePending(ctx, &master.Node{IdentityFingerprint: "fp-1", IdentityPublicKey: []byte{1}}, 20)
 	require.NoError(t, err)
@@ -332,7 +364,7 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 		}
 		return e.world.nodeKey.PublicKey(), true
 	})
-	control.AttachSelector(e.world.sel, srv.Epoch())
+	control.AttachSelector(countingSelector{Selector: e.world.sel, admits: e.admits}, srv.Epoch())
 	master.RouteNodeEvents(events, e.world.sel)
 	relayv1.RegisterRelayControlServer(srv.GRPC(), control)
 	relayv1.RegisterRelayTasksServer(srv.GRPC(), master.NewTasksServer(control))
@@ -397,6 +429,8 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 			return syncer.EnsureVersion(ctx, v)
 		},
 		AfterEpochChange: quotaSync.Report,
+		InvalidAuth: service.NewInvalidAuthAbuseGuard(&config.Config{APIKeyAuth: config.APIKeyAuthCacheConfig{
+			InvalidAbuse: invalidAbuseOrZero(testInvalidAuthAbuse)}}),
 	})
 	runCtx, stop := context.WithCancel(ctx)
 	t.Cleanup(stop)
@@ -408,6 +442,7 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 	e.records = records
 	go node.RunEvents(runCtx, client, syncer, node.EventHandlers{
 		Outbox: outbox, OnFlaggedHashes: e.moderation.Hashes.Apply, OnConnected: e.moderation.Hashes.RunResyncOnConnect,
+		OnInvalidation: d.OnInvalidation,
 	})
 	go sender.Run(runCtx)
 
