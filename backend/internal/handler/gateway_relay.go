@@ -31,13 +31,15 @@ func (h *GatewayHandler) relayAnthropicSelect(
 	body []byte,
 	isClaudeCodeClient bool,
 	platform string,
-	streamStarted bool,
+	streamStarted *bool,
 	reqLog *zap.Logger,
 ) (outcome AnthropicSelectOutcome, attempt *OpenAIRelayAttempt, written bool) {
+	onTick, _ := h.anthropicAdmissionWaitHooks(c, stream, streamStarted)
 	res := h.relay.Select(c, OpenAIRelaySelectRequest{
 		Anthropic: true, APIKey: apiKey, Model: model, Stream: stream, SessionHash: sessionKey,
 		MetadataUserID: parsed.MetadataUserID, InterceptType: detectInterceptType(body, model, parsed.MaxTokens, isClaudeCodeClient),
 		Excluded: fs.FailedAccountIDs, Body: body,
+		OnTick: onTick, TickInterval: h.concurrencyHelper.pingInterval,
 	})
 	ctx := c.Request.Context()
 	if r := res.Rejection; r != nil {
@@ -50,7 +52,7 @@ func (h *GatewayHandler) relayAnthropicSelect(
 		case OpenAIRelayRejectProfitVetoed:
 			return AnthropicSelectOutcome{Kind: AnthropicSelectProfitVetoed, Account: &service.Account{ID: r.VetoedAccountID}, Ctx: ctx}, nil, false
 		}
-		h.writeAnthropicRelayRejection(c, r, fs, platform, streamStarted, reqLog)
+		h.writeAnthropicRelayRejection(c, r, fs, platform, *streamStarted, reqLog)
 		return AnthropicSelectOutcome{}, nil, true
 	}
 	a := res.Attempt

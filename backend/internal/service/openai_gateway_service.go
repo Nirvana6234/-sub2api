@@ -508,7 +508,9 @@ type OpenAIGatewayService struct {
 	// upstreamErrorDecider：上游错误的判定；空时用本机实现（见 openai_upstream_error_decider.go）。
 	upstreamErrorDecider atomic.Pointer[openAIUpstreamErrorDeciderHolder]
 	// accountReporterOverride：账号状态的上报；空时用本机实现（见 openai_account_reporter.go）。
-	accountReporterOverride             atomic.Pointer[openAIAccountReporterHolder]
+	accountReporterOverride atomic.Pointer[openAIAccountReporterHolder]
+	// grokReporterOverride：Grok 账号状态的上报（见 grok_account_reporter.go）；空时本机直接写。
+	grokReporterOverride                atomic.Pointer[grokAccountReporterHolder]
 	grokCredentialMutationLocks         sync.Map // key: int64(accountID), value: *sync.Mutex
 	openaiOAuth429WindowStartUnixNano   atomic.Int64
 	openaiOAuth429WindowCount           atomic.Int64

@@ -60,6 +60,69 @@ func (r fakeAccounts) GetByID(_ context.Context, id int64) (*service.Account, er
 	return nil, service.ErrNoAvailableAccounts
 }
 
+// accountWrites 记下主节点写的账号状态（限流、临时不可调度、额外字段）。fakeAccounts 的写方法记在这里；用例用 useAccountWrites 清空。
+type accountWrites struct {
+	mu          sync.Mutex
+	rateLimited map[int64]time.Time
+	tempUnsched map[int64]time.Time
+	extra       map[int64]map[string]any
+}
+
+var testAccountWrites = &accountWrites{}
+
+func useAccountWrites(t *testing.T) *accountWrites {
+	t.Helper()
+	testAccountWrites = &accountWrites{rateLimited: map[int64]time.Time{}, tempUnsched: map[int64]time.Time{}, extra: map[int64]map[string]any{}}
+	t.Cleanup(func() { testAccountWrites = &accountWrites{} })
+	return testAccountWrites
+}
+
+func (w *accountWrites) snapshot() (rateLimited, tempUnsched map[int64]time.Time, extra map[int64]map[string]any) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	rateLimited, tempUnsched, extra = map[int64]time.Time{}, map[int64]time.Time{}, map[int64]map[string]any{}
+	for k, v := range w.rateLimited {
+		rateLimited[k] = v
+	}
+	for k, v := range w.tempUnsched {
+		tempUnsched[k] = v
+	}
+	for k, v := range w.extra {
+		extra[k] = v
+	}
+	return
+}
+
+func (r fakeAccounts) SetRateLimited(_ context.Context, id int64, resetAt time.Time) error {
+	w := testAccountWrites
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.rateLimited != nil {
+		w.rateLimited[id] = resetAt
+	}
+	return nil
+}
+
+func (r fakeAccounts) SetTempUnschedulable(_ context.Context, id int64, until time.Time, _ string) error {
+	w := testAccountWrites
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.tempUnsched != nil {
+		w.tempUnsched[id] = until
+	}
+	return nil
+}
+
+func (r fakeAccounts) UpdateExtra(_ context.Context, id int64, updates map[string]any) error {
+	w := testAccountWrites
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.extra != nil {
+		w.extra[id] = updates
+	}
+	return nil
+}
+
 func (r fakeAccounts) forPlatform(platform string) []service.Account {
 	var out []service.Account
 	for _, a := range r.accounts {

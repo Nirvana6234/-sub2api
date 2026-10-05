@@ -150,7 +150,7 @@ func (d *Dispatcher) Select(c *gin.Context, req handler.OpenAIRelaySelectRequest
 	}
 	sreq.AutoGroupStartId = st.startGroupID
 	st.mu.Unlock()
-	resp, err := d.deps.Select.Select(ctx, sreq)
+	resp, err := d.selectWithKeepalive(ctx, sreq, req)
 	if errors.Is(err, transport.ErrEpochChanged) && d.deps.AfterEpochChange != nil {
 		// 主节点重启过：先核对租约，再以新的一次选号重来（旧纪元的请求记录已不在）。
 		if err = d.deps.AfterEpochChange(ctx); err == nil {
@@ -158,7 +158,7 @@ func (d *Dispatcher) Select(c *gin.Context, req handler.OpenAIRelaySelectRequest
 			st.attempt++
 			sreq.Attempt = st.attempt
 			st.mu.Unlock()
-			resp, err = d.deps.Select.Select(ctx, sreq)
+			resp, err = d.selectWithKeepalive(ctx, sreq, req)
 		}
 	}
 	if err != nil {
@@ -177,6 +177,40 @@ func (d *Dispatcher) Select(c *gin.Context, req handler.OpenAIRelaySelectRequest
 		}
 	}
 	return d.admitSelection(c, st, req, sel)
+}
+
+// selectWithKeepalive 发选号调用；主节点在账号槽位上排队时调用一直阻塞，期间每个间隔给客户端发一次保活（req.OnTick，
+// 与本地排队时同一个回调）。回调返回错误（客户端断了）时放弃这次选号。选号一返回就停下，等保活协程退出后才返回
+// （之后处理函数接着写响应，不会和它交错）。
+func (d *Dispatcher) selectWithKeepalive(ctx context.Context, sreq *relayv1.SelectRequest, req handler.OpenAIRelaySelectRequest) (*relayv1.SelectResponse, error) {
+	if req.OnTick == nil || req.TickInterval <= 0 {
+		return d.deps.Select.Select(ctx, sreq)
+	}
+	cctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done, stopped := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(stopped)
+		ticker := time.NewTicker(req.TickInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-cctx.Done():
+				return
+			case <-ticker.C:
+				if err := req.OnTick(); err != nil {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	resp, err := d.deps.Select.Select(cctx, sreq)
+	close(done)
+	<-stopped
+	return resp, err
 }
 
 // selectRequest 组装选号请求：单机处理函数交给主节点那几步的原始事实。

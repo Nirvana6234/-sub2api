@@ -90,11 +90,13 @@ func (h *GatewayHandler) writeCompatRejection(c *gin.Context, kind compatKind, r
 // 主节点标了"自动分组换组"的拒绝（Chat 入口、第一次就选不出账号）转成选号失败，错误里带着这个拒绝（relayAutoGroupFailoverError）。
 // written 为 true 时已按主节点的拒绝写好响应。
 func (h *GatewayHandler) relayCompatSelect(c *gin.Context, kind compatKind, fs *FailoverState, apiKey *service.APIKey, model string, stream bool, sessionHash string,
-	streamStarted bool, reqLog *zap.Logger,
+	streamStarted *bool, reqLog *zap.Logger,
 ) (outcome AnthropicSelectOutcome, attempt *OpenAIRelayAttempt, written bool) {
+	onTick, _ := h.anthropicAdmissionWaitHooks(c, stream, streamStarted)
 	res := h.relay.Select(c, OpenAIRelaySelectRequest{
 		GatewayResponses: kind == compatResponses, GatewayChat: kind == compatChat,
 		APIKey: apiKey, Model: model, Stream: stream, SessionHash: sessionHash, Excluded: fs.FailedAccountIDs,
+		OnTick: onTick, TickInterval: h.concurrencyHelper.pingInterval,
 	})
 	ctx := c.Request.Context()
 	if r := res.Rejection; r != nil {
@@ -106,7 +108,7 @@ func (h *GatewayHandler) relayCompatSelect(c *gin.Context, kind compatKind, fs *
 		case r.AutoGroupFailover:
 			return AnthropicSelectOutcome{Kind: AnthropicSelectFailed, Ctx: ctx, Err: &relayAutoGroupFailoverError{rejection: r}}, nil, false
 		}
-		h.writeCompatRelayRejection(c, kind, r, fs, streamStarted, reqLog)
+		h.writeCompatRelayRejection(c, kind, r, fs, *streamStarted, reqLog)
 		return AnthropicSelectOutcome{}, nil, true
 	}
 	a := res.Attempt

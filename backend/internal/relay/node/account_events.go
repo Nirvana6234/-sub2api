@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
@@ -19,9 +21,16 @@ const healthFailureBodyLimit = 8 << 10
 type RemoteAccountReporter struct {
 	outbox *EventOutbox
 	now    func() time.Time
+
+	// grokMu、grokUsageAt：Grok 用量头事件的按账号节流。
+	grokMu      sync.Mutex
+	grokUsageAt map[int64]time.Time
 }
 
-var _ service.OpenAIAccountReporter = (*RemoteAccountReporter)(nil)
+var (
+	_ service.OpenAIAccountReporter = (*RemoteAccountReporter)(nil)
+	_ service.GrokAccountReporter   = (*RemoteAccountReporter)(nil)
+)
 
 // NewRemoteAccountReporter 创建远端上报，事件经 outbox 发送。
 func NewRemoteAccountReporter(outbox *EventOutbox) *RemoteAccountReporter {
@@ -161,6 +170,67 @@ func (r *RemoteAccountReporter) TempUnschedulable(accountID int64, until time.Ti
 	r.send(&relayv1.AccountEvent{AccountId: accountID, Kind: &relayv1.AccountEvent_TempUnschedulable{
 		TempUnschedulable: &relayv1.TempUnschedulableEvent{UntilUnixMs: until.UnixMilli(), Reason: reason},
 	}})
+}
+
+// ---- Grok 账号状态（service.GrokAccountReporter）----
+
+// grokUsageEventInterval：非关键的用量头事件，每个账号最多这个间隔发一次（本地同样按账号节流写快照）。
+const grokUsageEventInterval = 2 * time.Second
+
+// UpstreamError 上报 Grok 账号的一次上游错误响应，主节点用同一段代码判定冷却、限流、额度快照。
+func (r *RemoteAccountReporter) UpstreamError(_ context.Context, account *service.Account, statusCode int, headers http.Header, body []byte, model string) {
+	if account == nil {
+		return
+	}
+	r.send(&relayv1.AccountEvent{AccountId: account.ID, Kind: &relayv1.AccountEvent_GrokUpstreamError{GrokUpstreamError: &relayv1.GrokUpstreamErrorEvent{
+		StatusCode: int32(statusCode), Headers: headersToProto(headers), Body: capBody(body), Model: model,
+	}}})
+}
+
+// UsageResponse 上报 Grok 账号一次响应的用量头；非关键的按账号节流。
+func (r *RemoteAccountReporter) UsageResponse(_ context.Context, account *service.Account, headers http.Header, statusCode int, model string, critical bool) {
+	if account == nil {
+		return
+	}
+	if !critical {
+		now := time.Now()
+		r.grokMu.Lock()
+		if last, ok := r.grokUsageAt[account.ID]; ok && now.Sub(last) < grokUsageEventInterval {
+			r.grokMu.Unlock()
+			return
+		}
+		if r.grokUsageAt == nil {
+			r.grokUsageAt = map[int64]time.Time{}
+		}
+		r.grokUsageAt[account.ID] = now
+		r.grokMu.Unlock()
+	}
+	r.send(&relayv1.AccountEvent{AccountId: account.ID, Kind: &relayv1.AccountEvent_GrokUsageResponse{GrokUsageResponse: &relayv1.GrokUsageResponseEvent{
+		StatusCode: int32(statusCode), Headers: grokQuotaHeadersToProto(headers), Model: model,
+	}}})
+}
+
+// TempUnschedule 上报 Grok 账号临时不可调度（流空闲）。
+func (r *RemoteAccountReporter) TempUnschedule(_ context.Context, account *service.Account, cooldown time.Duration, reason string) {
+	if account == nil || cooldown <= 0 {
+		return
+	}
+	r.send(&relayv1.AccountEvent{AccountId: account.ID, Kind: &relayv1.AccountEvent_GrokTempUnschedule{GrokTempUnschedule: &relayv1.GrokTempUnscheduleEvent{
+		CooldownMs: cooldown.Milliseconds(), Reason: reason,
+	}}})
+}
+
+// grokQuotaHeadersToProto 只带额度快照要读的头（限流窗口、重试间隔、订阅档位）。
+func grokQuotaHeadersToProto(h http.Header) []*relayv1.HeaderValues {
+	out := make([]*relayv1.HeaderValues, 0, 8)
+	for name, values := range h {
+		lower := strings.ToLower(name)
+		if strings.HasPrefix(lower, "x-ratelimit") || strings.HasPrefix(lower, "x-rate-limit") || strings.HasPrefix(lower, "x-xai") ||
+			strings.HasPrefix(lower, "x-subscription") || lower == "retry-after" {
+			out = append(out, &relayv1.HeaderValues{Name: name, Values: values})
+		}
+	}
+	return out
 }
 
 func (r *RemoteAccountReporter) TempUnscheduleTransportError(_ context.Context, account *service.Account, safeErr string) {

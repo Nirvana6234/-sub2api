@@ -1258,7 +1258,33 @@ message AccountEvent {
     // Gemini 原生入口转发路径上的账号状态：429 没有上游给的重置时间时的档位冷却（主节点算）、转发时要清掉的粘性会话绑定。
     GeminiCooldownEvent gemini_cooldown = 23;
     StickySessionClearedEvent sticky_cleared = 24;
+    // Grok 转发路径上写账号状态的几处（上游错误响应的冷却 / 限流 / 额度快照、响应用量头、流空闲的临时不可调度）：主节点用同一段代码执行。
+    GrokUpstreamErrorEvent grok_upstream_error = 25;
+    GrokUsageResponseEvent grok_usage_response = 26;
+    GrokTempUnscheduleEvent grok_temp_unschedule = 27;
   }
+}
+
+// Grok 账号的一次上游错误响应（service.OpenAIGatewayService.handleGrokAccountUpstreamError 的输入）。
+message GrokUpstreamErrorEvent {
+  int32 status_code = 1;
+  repeated HeaderValues headers = 2;
+  bytes body = 3;
+  // 请求的上游模型（团队 + 模型限流用）。
+  string model = 4;
+}
+
+// Grok 账号一次响应的用量头（updateGrokUsageFromResponse 的输入，只带额度相关的头）。
+message GrokUsageResponseEvent {
+  int32 status_code = 1;
+  repeated HeaderValues headers = 2;
+  string model = 3;
+}
+
+// Grok 账号临时不可调度（流空闲）。
+message GrokTempUnscheduleEvent {
+  int64 cooldown_ms = 1;
+  string reason = 2;
 }
 
 // Gemini（Code Assist / Google One）账号收到 429、上游没给重置时间：冷却时长按档位定（RateLimitService.GeminiCooldown，在主节点），

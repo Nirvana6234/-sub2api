@@ -185,9 +185,11 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		}
 		var outcome OpenAISelectOutcome
 		if h.relay != nil {
+			onTick, _ := h.openAIAdmissionWaitHooks(c, reqStream, &streamStarted)
 			res := h.relay.Select(c, OpenAIRelaySelectRequest{
 				Chat: true, APIKey: apiKey, Model: reqModel, Stream: reqStream, SessionHash: sessionHash,
 				Excluded: failedAccountIDs, Body: body,
+				OnTick: onTick, TickInterval: h.concurrencyHelper.pingInterval,
 			})
 			if res.Rejection != nil && !res.Rejection.AutoGroupFailover {
 				h.writeOpenAIRelayRejection(c, res.Rejection, apiKey, reqModel, cyberBlockFormatChat, lastFailoverErr, streamStarted, reqLog)

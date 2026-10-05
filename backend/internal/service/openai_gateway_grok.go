@@ -1661,7 +1661,7 @@ func (s *OpenAIGatewayService) updateGrokUsageSnapshotWithRateLimit(ctx context.
 	}
 	account.Extra[grokQuotaSnapshotExtraKey] = snapshot
 	if s.accountRepo != nil {
-		_ = s.accountRepo.UpdateExtra(stateCtx, accountID, updates)
+		_ = s.accountRepo.UpdateExtra(stateCtx, accountID, updates) // relay:master-only 从节点经 GrokAccountReporter 上报，主节点执行
 	}
 	// Error responses are reconciled by handleGrokAccountUpstreamError. Pool-mode
 	// API keys retain the snapshot for observability but leave account health to
@@ -1674,7 +1674,7 @@ func (s *OpenAIGatewayService) updateGrokUsageSnapshotWithRateLimit(ctx context.
 	}
 }
 
-func (s *OpenAIGatewayService) updateGrokUsageFromResponse(ctx context.Context, account *Account, headers http.Header, statusCode int) {
+func (s *OpenAIGatewayService) updateGrokUsageFromResponseLocal(ctx context.Context, account *Account, headers http.Header, statusCode int) {
 	snapshot := parseGrokQuotaSnapshot(headers, statusCode, time.Now())
 	if snapshot != nil {
 		stampGrokQuotaSnapshotForPlan(account, snapshot, grokRequestedModelFromCtx(ctx))
@@ -2006,7 +2006,7 @@ func persistGrokTransientModelCooldown(account *Account, decision GrokUpstreamFa
 	return true
 }
 
-func (s *OpenAIGatewayService) handleGrokAccountUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte) {
+func (s *OpenAIGatewayService) handleGrokAccountUpstreamErrorLocal(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte) {
 	if s == nil || account == nil {
 		return
 	}
@@ -2100,7 +2100,7 @@ func isGrokSpendingLimitError(responseBody []byte) bool {
 		strings.Contains(message, "run out of credits")
 }
 
-func (s *OpenAIGatewayService) tempUnscheduleGrok(ctx context.Context, account *Account, cooldown time.Duration, reason string) {
+func (s *OpenAIGatewayService) tempUnscheduleGrokLocal(ctx context.Context, account *Account, cooldown time.Duration, reason string) {
 	if s == nil || account == nil {
 		return
 	}
@@ -2112,6 +2112,6 @@ func (s *OpenAIGatewayService) tempUnscheduleGrok(ctx context.Context, account *
 	if s.accountRepo != nil {
 		stateCtx, cancel := openAIAccountStateContext(ctx)
 		defer cancel()
-		_ = s.accountRepo.SetTempUnschedulable(stateCtx, account.ID, until, reason)
+		_ = s.accountRepo.SetTempUnschedulable(stateCtx, account.ID, until, reason) // relay:master-only 同上
 	}
 }

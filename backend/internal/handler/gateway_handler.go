@@ -342,7 +342,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			if h.relay != nil {
 				// 从节点：选号与准入经主节点（会话、粘性绑定的账号在主节点第一次选号时定下，换号状态在这里）。
 				var written bool
-				outcome, geminiRelayAttempt, written = h.relayAnthropicSelect(c, fs, apiKey, reqModel, reqStream, sessionKey, parsedReq, body, isClaudeCodeClient, platform, streamStarted, reqLog)
+				outcome, geminiRelayAttempt, written = h.relayAnthropicSelect(c, fs, apiKey, reqModel, reqStream, sessionKey, parsedReq, body, isClaudeCodeClient, platform, &streamStarted, reqLog)
 				if written {
 					return
 				}
@@ -631,7 +631,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			var outcome AnthropicSelectOutcome
 			if h.relay != nil {
 				var written bool
-				outcome, relayAttempt, written = h.relayAnthropicSelect(c, fs, currentAPIKey, reqModel, reqStream, sessionKey, parsedReq, body, isClaudeCodeClient, platform, streamStarted, reqLog)
+				outcome, relayAttempt, written = h.relayAnthropicSelect(c, fs, currentAPIKey, reqModel, reqStream, sessionKey, parsedReq, body, isClaudeCodeClient, platform, &streamStarted, reqLog)
 				if written {
 					return
 				}

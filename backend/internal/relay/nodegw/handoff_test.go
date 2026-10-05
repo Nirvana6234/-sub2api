@@ -2,6 +2,7 @@ package nodegw
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -67,4 +68,55 @@ func TestHandOffProxiesWebSocketUpgrades(t *testing.T) {
 	require.Equal(t, "/backend-api/codex/call_sideband1", gotPath)
 	require.Equal(t, "127.0.0.1", gotXFF, "the client IP rides in X-Forwarded-For")
 	require.NoError(t, conn.Close(coderws.StatusNormalClosure, ""))
+}
+
+// 不是转发的 API Key 接口（设计 8.4：用量、余额、模型清单、批量图片任务）从节点原样交给主节点执行：方法、路径、查询串、
+// 请求体、凭据、响应状态和响应体都不变，客户端 IP 放在 X-Forwarded-For；从节点不替它们鉴权也不缓存。
+func TestNonForwardingEndpointsAreHandedOffUnchanged(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	type seen struct{ method, path, query, auth, xff, body string }
+	var got seen
+	master := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		got = seen{r.Method, r.URL.Path, r.URL.RawQuery, r.Header.Get("Authorization"), r.Header.Get("X-Forwarded-For"), string(body)}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = io.WriteString(w, `{"from":"master","path":"`+r.URL.Path+`"}`)
+	}))
+	t.Cleanup(master.Close)
+	masterURL, err := url.Parse(master.URL)
+	require.NoError(t, err)
+	d := NewDispatcher(Deps{HandOff: NewHandOff(masterURL, http.DefaultTransport)})
+	cfg := &config.Config{}
+	cfg.Gateway.MaxBodySize = 1 << 20
+	r := NewEngine()
+	RegisterRoutes(r, nil, d, cfg, nil)
+	node := httptest.NewServer(r)
+	t.Cleanup(node.Close)
+
+	for _, tc := range []struct{ method, path, query, body string }{
+		{http.MethodGet, "/v1/models", "client_version=0.1", ""},
+		{http.MethodGet, "/v1/models/gpt-5", "", ""},
+		{http.MethodGet, "/v1beta/models", "", ""},
+		{http.MethodGet, "/v1/usage", "", ""},
+		{http.MethodGet, "/v1/sub2api/billing", "", ""},
+		{http.MethodPost, "/v1/images/batches", "", `{"model":"gpt-image-1","requests":[]}`},
+		{http.MethodGet, "/v1/images/batches/batch_1", "", ""},
+		{http.MethodGet, "/v1/relay/assignment", "", ""},
+	} {
+		target := node.URL + tc.path
+		if tc.query != "" {
+			target += "?" + tc.query
+		}
+		req, err := http.NewRequest(tc.method, target, strings.NewReader(tc.body))
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer sk-a")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err, tc.path)
+		out, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		require.Equal(t, http.StatusAccepted, resp.StatusCode, tc.path)
+		require.JSONEq(t, `{"from":"master","path":"`+tc.path+`"}`, string(out), tc.path)
+		require.Equal(t, seen{tc.method, tc.path, tc.query, "Bearer sk-a", "127.0.0.1", tc.body}, got, tc.path)
+	}
 }

@@ -276,7 +276,7 @@ WP10 工作量最大（所有平台），WP9 完成后按平台拆给多人并�
 
 | 事项 | 归属 | 状态 |
 |---|---|---|
-| 非 OpenAI 网关服务的账号状态接口：Anthropic（`GatewayService`，含 Bedrock / Vertex / Antigravity 账号）、Gemini、Antigravity、Grok、Bedrock 转发文件里直接调限流服务的约 30 处，统一成一个"账号状态"接口（同步判定走上游错误决策、异步的走账号事件），源码守卫扩到全部转发文件 | WP10 | 限流服务的四种判定已接（`AccountStateDecider`、从节点 `RemoteAccountState`、源码守卫）；各平台自己的写库（Gemini 429 冷却与限流标记、Grok 临时不可调度、`accountRepo.UpdateExtra` 等）随各自入口做 |
+| ~~非 OpenAI 网关服务的账号状态接口~~ | WP10 | 已完成：限流服务的四种判定（`AccountStateDecider`）、各平台自己的写库作为账号事件（Gemini 429 冷却与限流标记、Antigravity 模型级 / 账号级限流、Anthropic 临时不可调度、Grok 的上游错误响应 / 用量头 / 流空闲经 `GrokAccountReporter`：主节点用同一段代码执行，运行时屏蔽在主节点），源码守卫覆盖 Anthropic / Gemini / Antigravity / Grok 转发文件 |
 | ~~各服务族的扣费记录种类与入账（`GatewayService.RecordUsage` 等），每族一个与单机逐字段比对的一致性测试~~ | WP10 | 已完成（d43003de 及之后）：OpenAI、Anthropic、cyber 记录原有一致性测试；Gemini 原生记录（含渠道映射）、同步图片记录（渠道映射后的模型）经真正的 `Settler` 比对；Antigravity 账号映射表里的模型算凭证允许的范围；渠道映射后的模型一律进凭证允许范围（`voucherAllowedModels`） |
 | ~~安全审计按分工原则重做（设计 3.4）~~ | WP10 | 已完成（WP10-4 ①–⑩）：内容审核、提示词审计、cyber 记录都在从节点；从节点 cyber 的运维错误日志随 WP14 本机日志接上 |
 | ~~联网搜索在从节点执行（设计 3.3）~~ | WP10 | 已完成（fb373e85）：websearch 配额抽成 QuotaStore（单机仍是 Redis）；从节点用加密下发的配置建搜索管理器、换快照重建，份额内本机计数、每 10 秒上报，主节点汇总进 Redis 并回份额 |
@@ -289,8 +289,8 @@ WP10 工作量最大（所有平台），WP9 完成后按平台拆给多人并�
 | ~~Grok 专用入口（图片 `GrokImages`、视频、语音 tts / stt / custom-voices、realtime）、Seedance~~ | WP10 | 已完成（a2625b5e、a86e5631）：Grok 与国产兼容平台的文本入口（fc919493，只接 API Key 账号）、Grok 媒体与 Seedance（选号端点 `OPENAI_MEDIA`，生成资格检查、任务绑定在主节点）、Grok 语音与 realtime（`OPENAI_VOICE`）。**待决：Grok OAuth 账号**——凭据失败处理（`grok_credential_failure.go`）要刷新 token、写账号状态，用到只在主节点的仓储，要先定设计（失败事实作为事件交主节点执行、刷新后凭据版本更新）再接，现在经账号闸门交给主节点；组合平台分组的媒体入口也交给主节点 |
 | 按 ID 选号的有状态入口（设计 14）：异步图片任务、视频生成与查询、实时会话 `live` / `realtime`（call_id） | WP10 | 异步图片任务、视频生成与查询（Grok、Seedance）已完成（a2625b5e、5ca238c8）：任务登记与完成作为两种扣费记录（`OPENAI_VIDEO_TASK`、`OPENAI_VIDEO_COMPLETION`），状态和一次性认领在主节点；图片任务经 `RelayControl.ImageTask`。**`live` 暂不迁**：创建占账号租约并拿 attestation，主节点长期持有观察连接（按时长计费、续租、结束入账），旁路连接按 call_id 找记录，生命周期绑在主节点的 Redis 和后台协程上，从节点照常转交；要迁需先定"观察连接和结束入账放哪台"。未做：执行中从节点挂了时主节点把图片任务标为失败 |
 | ~~小白端 `/paw/*` 转发接口（票据由 WP12 签发，WP10 先用 `sign.IssueTicket` 直接签的票据测试）~~ | WP10（票据签发 WP12） | 已完成：从节点验票据、`PawResolve` 向主节点解析（复查用户和 token_version、本地 /paw 同一段校验代码、内部 key 原文不离开主节点，会话句柄代替）；聊天的校验和拼请求体拆开（附件在从节点）；单机/从节点一致性测试覆盖成功、错误响应、票据错误、改密码、用户停用、别的节点、附件。分配接口与票据续签在 WP12 |
-| 非转发接口转交（设计 8.4：`/v1/models`、`/v1/usage`、`/sub2api/billing` 等） | WP10 | |
-| 选号在主节点排队时给客户端保活 | WP10 | Anthropic OAuth 账号经从节点后这一项更要紧：OAuth 账号并发低，排队常见，本地流式请求排队时有 SSE ping，经从节点排到超时前客户端收不到任何东西 |
+| ~~非转发接口转交（设计 8.4：`/v1/models`、`/v1/usage`、`/sub2api/billing` 等）~~ | WP10 | 已完成：节点路由表里没有的接口经 `NoRoute` 原样反向代理给主节点（方法、路径、查询串、请求体、凭据、客户端 IP 在 X-Forwarded-For），测试覆盖模型清单、用量、余额、批量图片、分配查询。**设计里"模型清单在从节点按分组缓存 60 秒"的优化没做**：主节点自己已有模型清单缓存，缓存要先准入识别 Key 和分组、还要处理组合平台、Codex 的 client_version 等变体，收益只是省一次 HTTP 往返，暂不值得 |
+| ~~选号在主节点排队时给客户端保活~~ | WP10 | 已完成：选号是阻塞调用，从节点在等待期间按本地排队时同一个回调（OpenAI 注释行 ping、Anthropic ping 事件）每个间隔发一次 SSE ping，选号一返回就停；回调出错（客户端断了）放弃选号。Gemini 本地也不发 ping（`SSEPingFormatNone`），保持一致 |
 | Key 缓存与负缓存、无效鉴权防刷（没有时公网从节点可被用来不限速试 Key）、Key 删除 / 停用时收回额度、生成时分配节点等（见 WP11 行） | WP11 | |
 | 票据签发、小白端票据中间件与主节点复查、分配查询接口、主节点分配比例 | WP12 | |
 | ACME 证书、Caddy on_demand、域名解析检查与健康探测 | WP13 | |

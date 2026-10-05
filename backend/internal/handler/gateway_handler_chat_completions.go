@@ -199,7 +199,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		if h.relay != nil {
 			// 从节点：选号与准入经主节点（换号状态在这里）。
 			var written bool
-			relayOutcome, relayAttempt, written = h.relayCompatSelect(c, compatChat, fs, apiKey, reqModel, reqStream, selectionSessionHash, streamStarted, reqLog)
+			relayOutcome, relayAttempt, written = h.relayCompatSelect(c, compatChat, fs, apiKey, reqModel, reqStream, selectionSessionHash, &streamStarted, reqLog)
 			if written {
 				return
 			}

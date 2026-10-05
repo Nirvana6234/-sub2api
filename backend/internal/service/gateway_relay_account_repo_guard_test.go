@@ -50,3 +50,30 @@ func lineContainsAny(line string, parts []string) bool {
 	}
 	return false
 }
+
+// Grok 转发路径（从节点上没有账号仓储）：错误响应、用量头、流空闲对账号状态的写入都经 GrokAccountReporter 交给主节点（见
+// grok_account_reporter.go），本机实现（*Local 函数）只在主节点和单机上跑。这些文件里直接用账号仓储的行必须标
+// "// relay:master-only"。
+func TestGrokForwardPathWritesAccountStateOnlyThroughTheReporter(t *testing.T) {
+	files := []string{
+		"openai_gateway_grok.go", "openai_gateway_grok_chat_bridge.go", "openai_gateway_grok_cache.go", "openai_gateway_grok_compact.go",
+		"grok_media.go", "grok_audio.go", "grok_upstream_errors.go", "grok_upstream_failure.go", "grok_upstream_headers.go",
+		"grok_search_count.go", "grok_stream_idle.go", "seedance.go", "openai_gateway_cc_pipeline.go", "openai_gateway_chat_completions_raw.go",
+	}
+	for _, f := range files {
+		raw, err := os.ReadFile(f)
+		if os.IsNotExist(err) {
+			continue
+		}
+		require.NoError(t, err, f)
+		for i, line := range strings.Split(string(raw), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "//") || !strings.Contains(line, "accountRepo.") {
+				continue
+			}
+			if strings.Contains(line, "// relay:master-only") {
+				continue
+			}
+			t.Errorf("%s:%d uses the account repository on the Grok forward path; route it through GrokAccountReporter or mark it // relay:master-only: %s", f, i+1, strings.TrimSpace(line))
+		}
+	}
+}

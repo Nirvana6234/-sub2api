@@ -38,6 +38,10 @@ func NewOpenAIHandler(d GatewayDeps) *handler.OpenAIGatewayHandler {
 		nil, nil, nil, nil, nil, d.HTTPUpstream, nil, nil, nil, nil, nil, nil, d.Settings, nil)
 	gw.SetUpstreamErrorDecider(d.Decider)
 	gw.SetAccountReporter(d.Reporter)
+	if gr, ok := d.Reporter.(service.GrokAccountReporter); ok {
+		// Grok 转发路径上写账号状态的几处：从节点没有仓储，事实作为账号事件交给主节点执行。
+		gw.SetGrokAccountReporter(gr)
+	}
 	gw.SetOpenAIWSStateStore(NewStateStore())
 	if d.Dispatcher.deps.CyberEnabled == nil {
 		d.Dispatcher.deps.CyberEnabled = func(ctx context.Context) bool {

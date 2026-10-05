@@ -171,6 +171,30 @@ func (s *selector) applyAccountEvent(nodeID int64, ev *relayv1.AccountEvent) {
 		s.applyTempUnschedulable(ctx, nodeID, account, kind.TempUnschedulable)
 	case *relayv1.AccountEvent_SessionWindow:
 		reporter.UpdateSessionWindow(ctx, account, service.SessionWindowHeaders(headersFromProto(kind.SessionWindow.GetHeaders())))
+	case *relayv1.AccountEvent_GrokUpstreamError:
+		if s.grokAccount(account) {
+			e := kind.GrokUpstreamError
+			s.deps.Gateway.RelayGrokUpstreamError(ctx, account, int(e.GetStatusCode()), headersFromProto(e.GetHeaders()), e.GetBody(), e.GetModel())
+		}
+	case *relayv1.AccountEvent_GrokUsageResponse:
+		if s.grokAccount(account) {
+			e := kind.GrokUsageResponse
+			s.deps.Gateway.RelayGrokUsageResponse(ctx, account, headersFromProto(e.GetHeaders()), int(e.GetStatusCode()), e.GetModel())
+		}
+	case *relayv1.AccountEvent_GrokTempUnschedule:
+		if s.grokAccount(account) {
+			cooldown := time.Duration(kind.GrokTempUnschedule.GetCooldownMs()) * time.Millisecond
+			if cooldown > maxRelayGrokTempUnschedulable {
+				cooldown = maxRelayGrokTempUnschedulable
+			}
+			if cooldown > 0 {
+				reason := kind.GrokTempUnschedule.GetReason()
+				if len(reason) > 256 {
+					reason = reason[:256]
+				}
+				s.deps.Gateway.RelayGrokTempUnschedule(ctx, account, cooldown, reason)
+			}
+		}
 	}
 }
 
@@ -205,6 +229,14 @@ func (s *selector) applyTempUnschedulable(ctx context.Context, nodeID int64, acc
 	if err := s.deps.AnthropicGateway.SetAccountTempUnschedulable(ctx, account.ID, until, reason); err != nil {
 		slog.Warn("relay temp unschedulable event failed", "node_id", nodeID, "account_id", account.ID, "error", err)
 	}
+}
+
+// maxRelayGrokTempUnschedulable 是从节点报来的 Grok 临时不可调度的最长时长（这一路目前只有流空闲，几分钟）。
+const maxRelayGrokTempUnschedulable = 30 * time.Minute
+
+// grokAccount 报告这个账号的状态事件由 Grok 转发路径执行（Grok 平台账号，主节点装了 OpenAI 网关服务）。
+func (s *selector) grokAccount(a *service.Account) bool {
+	return s.deps.Gateway != nil && a != nil && a.Platform == service.PlatformGrok
 }
 
 // geminiForwarded 报告这个账号在 Gemini 原生入口上由 Gemini 转发服务转发（Gemini 平台账号，和 API Key 类型的 Antigravity 账号）。

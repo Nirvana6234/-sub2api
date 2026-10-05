@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
@@ -108,6 +109,10 @@ type OpenAIRelaySelectRequest struct {
 	Excluded map[int64]struct{}
 	// Body 是算会话哈希用的请求体（cyber 会话屏蔽的查询键从它算）。
 	Body []byte
+	// OnTick、TickInterval：选号在主节点排队时给客户端保活（本地流式请求排队时每个间隔发一次 SSE ping，第一次发时补上流式响应头）。
+	// 主节点替从节点排队，选号是一次阻塞的调用，保活由从节点自己发（设计 3.1）。OnTick 返回错误（客户端断了）时放弃这次选号。
+	OnTick       func() error
+	TickInterval time.Duration
 
 	// Anthropic：Anthropic 分组的 /v1/messages（GatewayHandler.Messages）。SessionHash 是会话键；
 	// MetadataUserID 是请求体里的 metadata.user_id；InterceptType 是按请求体算好的预热拦截类型。
