@@ -546,6 +546,16 @@ macOS 的版本由后台设置 `client_latest_version_mac` 单独控制（当前
 上一版 `20260927-a303e91-concurrency-37e6b5b`。内容：Codex 重置额度后立即清除限流冷却状态；额度页新增
 周额度自动重置开关与天数阈值（默认关闭）。`release.py candidate` 隔离验证通过后 `activate`，live verifier 通过。
 
+**r3（同日）合入官方 v0.2.13**：二进制 `sub2api-20261005-upstream-0.2.13-r1`（`63f80542f`），SHA256
+`008232e446f44124b5028b6a965562827676fd4523001fe5444ef2b5b22191cc`，上一版 `sub2api-20261005-keydelete-billing-expiry-r2`，
+发版前备份 `/opt/sub2api/backups/pre-deploy-20261005-upstream-0.2.13.dump`。
+
+- 合并 402 个官方提交，保留本地定制；**Key 删除漏计费改用官方修法**（`c2d5bbd93`，放弃本地 `f7b7835db`）。
+- 新增 5 个迁移（`238b`/`239`/`240`/`241_add_payment_order_bonus_amount`/`241_add_typesafe_platform`），均为加列/放宽约束，已在生产落库。
+- TypeSafe/Jev 两边各自实现了 `/v1/systemone`：保留本地网关与账号测试，官方的重复实现已删除。
+- 取舍：模型选择器按官方语义（只列映射内模型）；Responses 探测遇 model-not-found 不再落标。
+- 匿名 `/payment/public/orders/verify` 仍保持本地的「必须登录」，未采用官方的限流匿名方案。
+
 ## B5. 回滚
 
 bind mount 模式：把 compose 里挂载的文件名改回上一个二进制，重跑 B3 最后那条命令即可。
