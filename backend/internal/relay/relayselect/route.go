@@ -3,6 +3,7 @@ package relayselect
 import (
 	"context"
 	"encoding/json"
+	"slices"
 
 	"github.com/Wei-Shaw/sub2api/internal/relay/keycodec"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
@@ -18,9 +19,41 @@ func (s *selector) resolveComposite(ctx context.Context, apiKey *service.APIKey,
 	return s.deps.Composite.Resolve(ctx, apiKey.Group.ID, model, service.CompositeRouteEndpointForPath(path))
 }
 
-// compositeServedByNode 报告组合平台分组这次选定的目标 OpenAI 入口能不能接。
-func compositeServedByNode(apiKey *service.APIKey, decision service.CompositeRouteDecision) bool {
-	return compositeServedBy(apiKey, decision, service.PlatformOpenAI)
+// openAICompatiblePlatforms 是 OpenAI 网关的 Responses / Chat / Messages 入口能服务的分组平台（本地 isOpenAIResponsesCompatibleGatewayPlatform）。
+var openAICompatiblePlatforms = []string{
+	service.PlatformOpenAI, service.PlatformGrok, service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepseek,
+	service.PlatformMiniMax, service.PlatformOpenCodeGo,
+}
+
+func isOpenAICompatiblePlatform(platform string) bool {
+	return slices.Contains(openAICompatiblePlatforms, platform)
+}
+
+// openAIRequestPlatform 是这次请求按 OpenAI 网关调度时的平台（本地 openAICompatibleRequestPlatform）：组合平台分组看选定的目标，
+// 其余看分组平台；text 为 false 的入口（Embeddings、图片、alpha search）只服务 OpenAI。ok 为 false 时这个入口接不了。
+func openAIRequestPlatform(apiKey *service.APIKey, decision service.CompositeRouteDecision, text bool) (platform string, ok bool) {
+	platform = groupPlatformOf(apiKey)
+	if platform == service.PlatformComposite {
+		if !decision.Matched {
+			return "", false
+		}
+		platform = decision.TargetPlatform
+	}
+	if text {
+		ok = isOpenAICompatiblePlatform(platform)
+	} else {
+		ok = platform == service.PlatformOpenAI
+	}
+	return service.NormalizeOpenAICompatiblePlatform(platform), ok
+}
+
+// openAICompatAccountServed 报告从节点能不能转发这个账号：OpenAI 平台的账号都接；Grok、国产兼容平台只接 API Key 账号
+// （Grok OAuth 的凭据刷新与失败处理还在主节点）。
+func openAICompatAccountServed(requestPlatform string, a *service.Account) bool {
+	if requestPlatform == service.PlatformOpenAI {
+		return true
+	}
+	return a != nil && a.Type == service.AccountTypeAPIKey
 }
 
 // compositeServedBy 报告组合平台分组这次选定的目标是不是 target（入口自己接的平台）；不是组合平台分组时都接。

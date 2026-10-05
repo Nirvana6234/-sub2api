@@ -80,7 +80,7 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 		return func(c *gin.Context) {
 			key, ok := middleware2.GetAPIKeyFromContext(c)
 			switch {
-			case ok && servedPlatform(c, key) == service.PlatformOpenAI:
+			case ok && isOpenAICompatiblePlatform(servedPlatform(c, key)):
 				openAI(c)
 			case ok && gateway != nil && gh != nil && servesAnthropicRoutes(c, key):
 				gateway(c)
@@ -89,7 +89,16 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 			}
 		}
 	}
-	openAIOnly := func(next gin.HandlerFunc) gin.HandlerFunc { return byPlatform(next, nil) }
+	// openAIOnly：只服务 OpenAI 分组的入口（WebSocket、Embeddings、图片、alpha search），其余平台交给主节点。
+	openAIOnly := func(next gin.HandlerFunc) gin.HandlerFunc {
+		return func(c *gin.Context) {
+			if key, ok := middleware2.GetAPIKeyFromContext(c); !ok || servedPlatform(c, key) != service.PlatformOpenAI {
+				d.HandOff(c)
+				return
+			}
+			next(c)
+		}
+	}
 	responses := byPlatform(func(c *gin.Context) {
 		if !service.IsForwardableOpenAIResponsesRequestPath(c) {
 			// 不可转发的子路径由主节点照原逻辑处理。
@@ -112,7 +121,14 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 	chatCompletions := byPlatform(h.ChatCompletions, func(c *gin.Context) { gh.ChatCompletions(c) })
 	// 与本地 countTokensHandler 一样按分组平台分：OpenAI 分组走 OpenAI 网关的 count_tokens，Anthropic / Gemini / Antigravity 平台的分组走
 	// Messages 处理函数的 count_tokens；其余平台（Grok 本地估算、国产兼容平台）还没接入。
-	countTokens := byPlatform(h.CountTokens, func(c *gin.Context) { gh.CountTokens(c) })
+	countTokens := byPlatform(func(c *gin.Context) {
+		// Grok 在本地估算（不选账号、不计费，不用问主节点）；OpenAI 与国产兼容平台选账号转发。
+		if key, ok := middleware2.GetAPIKeyFromContext(c); ok && servedPlatform(c, key) == service.PlatformGrok {
+			h.GrokCountTokens(c)
+			return
+		}
+		h.CountTokens(c)
+	}, func(c *gin.Context) { gh.CountTokens(c) })
 	for _, prefix := range []string{"/v1", ""} {
 		g := r.Group(prefix, chain...)
 		g.POST("/messages/count_tokens", countTokens)
@@ -131,7 +147,7 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 				// 与本地 /v1/messages 一样按分组平台分：OpenAI 分组走 OpenAI 网关的 Messages，Anthropic 分组走 Messages。
 				key, ok := middleware2.GetAPIKeyFromContext(c)
 				switch {
-				case ok && servedPlatform(c, key) == service.PlatformOpenAI:
+				case ok && isOpenAICompatiblePlatform(servedPlatform(c, key)):
 					h.Messages(c)
 				case ok && gh != nil && servesAnthropicRoutes(c, key):
 					gh.Messages(c)
@@ -247,4 +263,14 @@ func NewEngine() *gin.Engine {
 	r := gin.New()
 	r.Use(middleware2.Recovery(), middleware2.RequestLogger())
 	return r
+}
+
+// isOpenAICompatiblePlatform 报告 OpenAI 网关的 Responses / Chat / Messages 入口服务的分组平台（本地 isOpenAIResponsesCompatibleGatewayPlatform）。
+func isOpenAICompatiblePlatform(platform string) bool {
+	switch platform {
+	case service.PlatformOpenAI, service.PlatformGrok, service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepseek,
+		service.PlatformMiniMax, service.PlatformOpenCodeGo:
+		return true
+	}
+	return false
 }

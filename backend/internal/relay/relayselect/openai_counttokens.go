@@ -28,7 +28,8 @@ func (s *selector) selectOpenAICountTokens(ctx context.Context, nodeID int64, re
 	if err != nil {
 		return nil, err
 	}
-	if !compositeServedByNode(apiKey, composite) {
+	requestPlatform, platformOK := openAIRequestPlatform(apiKey, composite, true)
+	if !platformOK {
 		return unsupported(), nil
 	}
 	ctx = middleware.RelayRequestContext(ctx, adm)
@@ -40,7 +41,7 @@ func (s *selector) selectOpenAICountTokens(ctx context.Context, nodeID int64, re
 	mapping, _ := s.deps.Gateway.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, reqModel)
 	var routingModel string
 	if anthropic {
-		routingModel = handler.OpenAIMessagesRoutingModel(apiKey, reqModel)
+		routingModel = handler.OpenAIMessagesRoutingModelFor(apiKey, composite.TargetPlatform, reqModel)
 	} else {
 		routingModel = reqModel
 		if mapping.Mapped {
@@ -51,9 +52,12 @@ func (s *selector) selectOpenAICountTokens(ctx context.Context, nodeID int64, re
 		return gatewayRejection(billingRejection(err, anthropic)), nil
 	}
 	account, err := s.deps.Gateway.SelectAccountForTokenCount(ctx, apiKey.GroupID, req.GetSessionHash(), routingModel,
-		service.OpenAIEndpointCapabilityChatCompletions, service.PlatformOpenAI)
+		service.OpenAIEndpointCapabilityChatCompletions, requestPlatform)
 	if err != nil || account == nil {
 		return gatewayRejection(handler.OpenAICountTokensNoAccountRejection(ctx, s.deps.Gateway, apiKey, routingModel, reqModel, anthropic, err)), nil
+	}
+	if !openAICompatAccountServed(requestPlatform, account) {
+		return unsupported(), nil
 	}
 
 	record, _, err := s.requestFor(nodeID, req.GetRequestId())

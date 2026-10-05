@@ -197,16 +197,28 @@ func openAIAccountScheduleModel(c *gin.Context, account *service.Account, forwar
 }
 
 func resolveOpenAIMessagesDispatchMappedModel(c *gin.Context, apiKey *service.APIKey, requestedModel string) string {
+	return openAIMessagesDispatchMappedModelFor(apiKey, resolvedTargetPlatformOf(c), requestedModel)
+}
+
+// resolvedTargetPlatformOf 是请求 ctx 里组合平台选定的目标平台（没有时为空）。
+func resolvedTargetPlatformOf(c *gin.Context) string {
+	if c == nil || c.Request == nil {
+		return ""
+	}
+	platform, _ := service.ResolvedTargetPlatformFromContext(c.Request.Context())
+	return platform
+}
+
+// openAIMessagesDispatchMappedModelFor 是 resolveOpenAIMessagesDispatchMappedModel 的核心，resolvedPlatform 是组合平台选定的目标平台。
+func openAIMessagesDispatchMappedModelFor(apiKey *service.APIKey, resolvedPlatform, requestedModel string) string {
 	if apiKey == nil || apiKey.Group == nil {
 		return ""
 	}
 	// composite 解析到 grok/CN/OpenCode 目标时调度级映射不适用（Group 级映射的
 	// gpt-5.x 默认值是 openai 专属,发给这些上游必错）,模型改写交给账号级 model_mapping。
-	if apiKey.Group.Platform == service.PlatformComposite && c != nil && c.Request != nil {
-		if platform, ok := service.ResolvedTargetPlatformFromContext(c.Request.Context()); ok &&
-			(platform == service.PlatformGrok || service.IsMultiProtocolAPIKeyProvider(platform)) {
-			return ""
-		}
+	if apiKey.Group.Platform == service.PlatformComposite &&
+		(resolvedPlatform == service.PlatformGrok || service.IsMultiProtocolAPIKeyProvider(resolvedPlatform)) {
+		return ""
 	}
 	return strings.TrimSpace(apiKey.Group.ResolveMessagesDispatchModel(requestedModel))
 }
@@ -300,7 +312,14 @@ func allowOpenAICompatibleMessagesDispatch(c *gin.Context, apiKey *service.APIKe
 	if apiKey == nil || apiKey.Group == nil {
 		return true
 	}
-	if apiKey.Group.Platform == service.PlatformGrok {
+	return AllowOpenAICompatibleMessagesDispatchFor(apiKey.Group, resolvedTargetPlatformOf(c))
+}
+
+// AllowOpenAICompatibleMessagesDispatchFor 报告这个分组是否允许 /v1/messages 派发（主从分流的主节点也用它）；resolvedPlatform 是组合平台
+// 选定的目标平台。
+func AllowOpenAICompatibleMessagesDispatchFor(group *service.Group, resolvedPlatform string) bool {
+	apiKey := &service.APIKey{Group: group}
+	if group.Platform == service.PlatformGrok {
 		return true
 	}
 	// 国产供应商分组与 grok 同语义:/v1/messages 就是其主要服务形态(anthropic
@@ -312,11 +331,9 @@ func allowOpenAICompatibleMessagesDispatch(c *gin.Context, apiKey *service.APIKe
 	}
 	// composite 分组解析到 grok/CN/OpenCode Go 目标时与对应独立分组同语义豁免；
 	// 解析到 openai 目标则受 composite 分组自身的可配置开关控制。
-	if apiKey.Group.Platform == service.PlatformComposite && c != nil && c.Request != nil {
-		if platform, ok := service.ResolvedTargetPlatformFromContext(c.Request.Context()); ok &&
-			(platform == service.PlatformGrok || service.IsMultiProtocolAPIKeyProvider(platform)) {
-			return true
-		}
+	if apiKey.Group.Platform == service.PlatformComposite &&
+		(resolvedPlatform == service.PlatformGrok || service.IsMultiProtocolAPIKeyProvider(resolvedPlatform)) {
+		return true
 	}
 	return apiKey.Group.AllowMessagesDispatch
 }

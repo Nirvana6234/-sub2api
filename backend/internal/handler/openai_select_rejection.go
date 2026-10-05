@@ -70,7 +70,12 @@ func OpenAIMessagesDispatchDeniedRejection() OpenAIGatewayRejection {
 
 // OpenAIMessagesRoutingModel 是 /v1/messages 入口选号用的模型：分组配置的派发映射优先，否则规范化后的请求模型。
 func OpenAIMessagesRoutingModel(apiKey *service.APIKey, reqModel string) string {
-	if mapped := resolveOpenAIMessagesDispatchMappedModel(nil, apiKey, reqModel); mapped != "" {
+	return OpenAIMessagesRoutingModelFor(apiKey, "", reqModel)
+}
+
+// OpenAIMessagesRoutingModelFor 同 OpenAIMessagesRoutingModel；resolvedPlatform 是组合平台选定的目标平台。
+func OpenAIMessagesRoutingModelFor(apiKey *service.APIKey, resolvedPlatform, reqModel string) string {
+	if mapped := openAIMessagesDispatchMappedModelFor(apiKey, resolvedPlatform, reqModel); mapped != "" {
 		return mapped
 	}
 	return service.NormalizeOpenAICompatRequestedModel(reqModel)

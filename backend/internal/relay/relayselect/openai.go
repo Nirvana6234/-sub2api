@@ -111,15 +111,17 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 	if err != nil {
 		return nil, err
 	}
-	if !compositeServedByNode(apiKey, composite) {
+	// Responses / Chat / Messages 入口也服务 Grok 和国产兼容平台的分组（按选定的平台调度）；其余入口只服务 OpenAI。
+	requestPlatform, platformOK := openAIRequestPlatform(apiKey, composite, !embeddings && !images && !alpha)
+	if !platformOK {
 		return unsupported(), nil
 	}
 	ctx = service.WithCompositeRouteDecision(ctx, composite)
 	// 请求开头的检查（/v1/messages 派发、previous_response_id 归属、生图）本地只在开头按当时的分组做一次，
 	// 自动分组中途换组后不重做：这里同样按请求开始时的分组。
 	startGroup := s.requestStartGroup(ctx, apiKey, req.GetAutoGroupStartId())
-	if messages && !startGroup.AllowMessagesDispatch {
-		// 本地在读请求体之前就查（分组平台只会是 OpenAI：其余平台在准入时已回"暂不支持"）。
+	if messages && !handler.AllowOpenAICompatibleMessagesDispatchFor(startGroup, composite.TargetPlatform) {
+		// 本地在读请求体之前就查。
 		return gatewayRejection(handler.OpenAIMessagesDispatchDeniedRejection()), nil
 	}
 	ctx = middleware.RelayRequestContext(ctx, adm)
@@ -129,7 +131,6 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 	userID := apiKey.User.ID
 	groupID := apiKey.Group.ID
 	reqModel := req.GetModel()
-	requestPlatform := service.PlatformOpenAI
 	log := zap.NewNop()
 
 	// Chat 没有续链、生图和 compact：从节点报了也不认。
@@ -178,7 +179,7 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 	}
 	if messages {
 		// Messages 按分组的派发映射（或规范化后的请求模型）选号，渠道映射只改请求体。
-		forwardModel = handler.OpenAIMessagesRoutingModel(apiKey, reqModel)
+		forwardModel = handler.OpenAIMessagesRoutingModelFor(apiKey, composite.TargetPlatform, reqModel)
 	}
 	quotaReq := service.QuotaRequest{User: apiKey.User, APIKey: apiKey, Group: apiKey.Group, Subscription: subscription, Platform: service.QuotaPlatform(ctx, apiKey)}
 
@@ -299,6 +300,14 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 		return gatewayRejection(handler.OpenAINoAccountRejection(ctx, s.deps.Gateway, apiKey, reqModel, requestPlatform, nil)), nil
 	default:
 		return gatewayRejection(handler.OpenAISelectOutcomeRejection(outcome)), nil
+	}
+
+	if !openAICompatAccountServed(requestPlatform, outcome.Account) {
+		// 从节点还接不了这种账号（Grok OAuth 的凭据刷新与失败处理在主节点）：放掉槽位，交给主节点转发。
+		if outcome.Release != nil {
+			outcome.Release()
+		}
+		return unsupported(), nil
 	}
 
 	sel := &selectionRecord{
@@ -435,12 +444,19 @@ const noGroupPlatform = ""
 
 var (
 	// openAIServedPlatforms 是 OpenAI 入口经从节点能接的分组平台。
-	openAIServedPlatforms = []string{service.PlatformOpenAI, service.PlatformComposite}
+	openAIServedPlatforms = []string{
+		service.PlatformOpenAI, service.PlatformComposite, service.PlatformGrok, service.PlatformKimi, service.PlatformZhipu,
+		service.PlatformDeepseek, service.PlatformMiniMax, service.PlatformOpenCodeGo,
+	}
 	// anthropicServedPlatforms 是 Anthropic Messages 入口经从节点能接的分组平台（组合平台分组只接选到 Anthropic 目标的）。
 	// Gemini 平台的 Messages（本地 platform == gemini 分支）和 Antigravity 平台分组的 Messages 也走这个入口。
 	anthropicServedPlatforms = []string{service.PlatformAnthropic, service.PlatformGemini, service.PlatformAntigravity, service.PlatformComposite, noGroupPlatform}
 	// relayServedPlatforms 是准入、定走向时放行的分组平台（哪个入口接由从节点的路由按分组平台再分）。
-	relayServedPlatforms = []string{service.PlatformOpenAI, service.PlatformComposite, service.PlatformAnthropic, service.PlatformGemini, service.PlatformAntigravity, noGroupPlatform}
+	relayServedPlatforms = []string{
+		service.PlatformOpenAI, service.PlatformComposite, service.PlatformAnthropic, service.PlatformGemini, service.PlatformAntigravity,
+		service.PlatformGrok, service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepseek, service.PlatformMiniMax, service.PlatformOpenCodeGo,
+		noGroupPlatform,
+	}
 	// geminiServedPlatforms 是 Gemini 原生入口（/v1beta）经从节点能接的分组平台（组合平台分组只接选到 Gemini 或没有匹配目标的）。
 	geminiServedPlatforms = []string{service.PlatformGemini, service.PlatformComposite}
 )

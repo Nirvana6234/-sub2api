@@ -13,6 +13,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 // localOpenAI 是单机上的 OpenAI 网关（同一个处理函数，没有从节点）：与从节点那一路对同样的请求比对结果。
@@ -193,4 +194,42 @@ func TestNodeServesAlphaSearchLikeASingleServer(t *testing.T) {
 	localStatus, localBody = emptyLocal.post(t, "/v1/alpha/search", "sk-a", body)
 	require.Equal(t, localStatus, nodeStatus)
 	require.Equal(t, localBody, nodeBody)
+}
+
+// Grok、国产兼容平台（Kimi 等）分组的 Responses / Chat / count_tokens 入口也经从节点（API Key 账号）：与单机同请求的响应一致。
+func TestNodeServesOpenAICompatiblePlatformsLikeASingleServer(t *testing.T) {
+	kimi := openAIGroup(21)
+	kimi.Platform = service.PlatformKimi
+	account := apiKeyAccount(1, "kimi")
+	account.Platform = service.PlatformKimi
+	account.AccountGroups = []service.AccountGroup{{AccountID: 1, GroupID: 21}}
+	accounts := []service.Account{account}
+	e := startStandardE2E(t, func(upstream string) []service.Account {
+		accounts[0].Credentials["base_url"] = upstream
+		return accounts
+	})
+	e.world.keys.keys["sk-kimi"] = testKey("sk-kimi", 25, kimi)
+	local := startLocalOpenAI(t, e, accounts, func(g *gin.RouterGroup, h *handler.OpenAIGatewayHandler) {
+		g.POST("/chat/completions", h.ChatCompletions)
+		g.POST("/responses", h.Responses)
+	})
+	for _, tc := range []struct{ path, body string }{
+		{"/v1/chat/completions", `{"model":"kimi-k2","messages":[{"role":"user","content":"hi"}]}`},
+		{"/v1/responses", `{"model":"kimi-k2","input":"hi"}`},
+	} {
+		nodeStatus, nodeBody := e.post(t, tc.path, "sk-kimi", tc.body)
+		e.world.waitReleased(t)
+		localStatus, localBody := local.post(t, tc.path, "sk-kimi", tc.body)
+		require.Equal(t, localStatus, nodeStatus, tc.path+" "+nodeBody)
+		if tc.path == "/v1/responses" {
+			// 响应里的 item id 是随机的，比对其余字段。
+			for _, field := range []string{"status", "model", "output.0.content.0.text", "usage"} {
+				require.Equal(t, gjson.Get(localBody, field).Raw, gjson.Get(nodeBody, field).Raw, field)
+			}
+			continue
+		}
+		require.Equal(t, localBody, nodeBody, tc.path)
+	}
+	require.Eventually(t, func() bool { return len(e.settler.records()) >= 1 }, 5e9, 2e7, "served by the node and billed")
+	require.Equal(t, int64(21), mustVoucher(t, e, e.settler.records()[0]).GetGroupId())
 }

@@ -491,8 +491,8 @@ func TestAdmit(t *testing.T) {
 	// Anthropic 分组照常准入（哪个入口接由从节点的路由按分组平台分）；还没接入的平台回"暂不支持"。
 	require.NotNil(t, admit("sk-anthropic").GetAdmission())
 	require.NotNil(t, admit("sk-gemini").GetAdmission(), "Gemini groups are admitted too (their Messages entry is served; other entries are routed by the node)")
-	grok := openAIGroup(12)
-	grok.Platform = service.PlatformGrok
+	grok := openAIGroup(12) // 还没接的平台（TypeSafe 只说自己的协议）
+	grok.Platform = service.PlatformTypeSafe
 	w.keys.keys["sk-grok"] = testKey("sk-grok", 19, grok)
 	require.Equal(t, relayv1.RejectionFormat_REJECTION_FORMAT_UNSUPPORTED, admit("sk-grok").GetRejection().GetFormat())
 
