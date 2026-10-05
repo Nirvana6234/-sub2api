@@ -110,6 +110,23 @@ func (r *RemoteAccountReporter) RateLimited(accountID int64, resetAt time.Time) 
 	}})
 }
 
+// ReportGeminiCooldown 报告 Gemini 账号收到 429、上游没给重置时间（service.GeminiCooldownReporter）：冷却时长按档位定，
+// 由主节点算并写账号级限流。
+func (r *RemoteAccountReporter) ReportGeminiCooldown(accountID int64) {
+	if accountID <= 0 {
+		return
+	}
+	r.send(&relayv1.AccountEvent{AccountId: accountID, Kind: &relayv1.AccountEvent_GeminiCooldown{GeminiCooldown: &relayv1.GeminiCooldownEvent{}}})
+}
+
+// StickySessionCleared 报告转发路径上清掉了这个粘性会话绑定（accountID 是这次尝试用的账号），主节点只认这次请求自己的会话键。
+func (r *RemoteAccountReporter) StickySessionCleared(accountID int64, sessionKey string) {
+	if accountID <= 0 || sessionKey == "" {
+		return
+	}
+	r.send(&relayv1.AccountEvent{AccountId: accountID, Kind: &relayv1.AccountEvent_StickyCleared{StickyCleared: &relayv1.StickySessionClearedEvent{SessionKey: sessionKey}}})
+}
+
 // ModelRateLimitsExtra 报告清除了积分耗尽标记后的整张模型级限流表，主节点写回账号 extra。
 func (r *RemoteAccountReporter) ModelRateLimitsExtra(accountID int64, limitsJSON []byte) {
 	if accountID <= 0 || len(limitsJSON) == 0 {

@@ -23,6 +23,8 @@ func TestAnthropicForwardPathOnlyTempUnschedulesAccounts(t *testing.T) {
 		"antigravity_gateway_service.go", "antigravity_gateway_claude.go", "antigravity_gateway_compat.go",
 		"antigravity_gateway_compat_stream.go", "antigravity_gateway_retry.go", "antigravity_gateway_streaming.go",
 		"antigravity_gateway_upstream.go", "antigravity_credits_overages.go", "antigravity_internal500_penalty.go",
+		// Gemini 原生入口的转发路径：429 的账号级限流是账号事件（选号、Gemini 账号列表等只在主节点跑，行尾标 relay:master-only）。
+		"gemini_messages_compat_service.go", "antigravity_gateway_gemini.go",
 	}
 	allowed := []string{"accountRepo.SetTempUnschedulable(", "accountRepo.SetModelRateLimit(", "accountRepo.SetRateLimited(", "accountRepo.UpdateExtra("}
 	for _, f := range files {

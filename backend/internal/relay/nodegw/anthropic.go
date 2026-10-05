@@ -183,13 +183,20 @@ func NewAnthropicHandler(d GatewayDeps, a AnthropicDeps) *handler.GatewayHandler
 	}
 	// Antigravity 账号（混合调度进 Anthropic 分组的）：与单机同一个转发服务；Google token 由主节点随凭据下发
 	// （这里的 token 提供者只读下发的 access_token），账号状态写入经 relayAccountRepo 交主节点。
+	// Gemini 原生入口（GeminiV1BetaModels）：Gemini 转发服务只拿转发要用的（上游 HTTP、Gemini token 提供者读下发的 access_token）；
+	// 429 的账号级限流、清粘性会话绑定是账号事件，档位冷却的时长由主节点算。
 	var antigravity *service.AntigravityGatewayService
+	var geminiCompat *service.GeminiMessagesCompatService
 	if a.Reporter != nil {
-		antigravity = service.NewAntigravityGatewayService(repo, NoopGatewayCache{}, nil,
+		antigravity = service.NewAntigravityGatewayService(repo, relayStickyCache{reporter: a.Reporter}, nil,
 			service.NewAntigravityTokenProvider(nil, nil, nil), nil, d.HTTPUpstream, d.Settings, newRelayInternal500(a.Reporter))
 		antigravity.SetAccountStateDecider(a.AccountState)
+		geminiCompat = service.NewGeminiMessagesCompatService(repo, nil, NoopGatewayCache{}, nil,
+			service.NewGeminiTokenProvider(nil, nil, nil), nil, d.HTTPUpstream, antigravity, d.Config)
+		geminiCompat.SetAccountStateDecider(a.AccountState)
+		geminiCompat.SetCooldownReporter(a.Reporter)
 	}
-	h := handler.NewGatewayHandler(gw, nil, nil, antigravity, nil, nil, nil, nil, nil, nil, d.ErrorPassthrough, moderation, userMsgQueue, d.Config, d.Settings)
+	h := handler.NewGatewayHandler(gw, nil, geminiCompat, antigravity, nil, nil, nil, nil, nil, nil, d.ErrorPassthrough, moderation, userMsgQueue, d.Config, d.Settings)
 	h.SetRelayDispatcher(d.Dispatcher)
 	if d.Moderation != nil {
 		// 安全审计在从节点本地判定（设计 3.4），与单机同一个协调器。

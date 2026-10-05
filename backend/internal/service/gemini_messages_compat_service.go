@@ -58,6 +58,18 @@ type GeminiMessagesCompatService struct {
 	responseHeaderFilter      *responseheaders.CompiledHeaderFilter
 	// accountStateSlot：账号状态判定；从节点装远程实现（account_state_decider.go）。
 	accountStateSlot
+	// cooldownReporter 在从节点上把"429 没有上游重置时间时的档位冷却"交给主节点（RateLimitService 在主节点）；nil 时本地算。
+	cooldownReporter GeminiCooldownReporter
+}
+
+// GeminiCooldownReporter 是从节点上报 Gemini 429 档位冷却的出口（主节点按档位算冷却时长并写账号级限流）。
+type GeminiCooldownReporter interface {
+	ReportGeminiCooldown(accountID int64)
+}
+
+// SetCooldownReporter 装上档位冷却的上报出口（从节点装配用）。
+func (s *GeminiMessagesCompatService) SetCooldownReporter(r GeminiCooldownReporter) {
+	s.cooldownReporter = r
 }
 
 func (s *GeminiMessagesCompatService) readUpstreamErrorBody(resp *http.Response) []byte {
@@ -433,7 +445,7 @@ func (s *GeminiMessagesCompatService) getSchedulableAccount(ctx context.Context,
 	if s.schedulerSnapshot != nil {
 		account, err = s.schedulerSnapshot.GetAccount(ctx, accountID)
 	} else {
-		account, err = s.accountRepo.GetByID(ctx, accountID)
+		account, err = s.accountRepo.GetByID(ctx, accountID) // relay:master-only 选号
 	}
 	if err != nil || account == nil {
 		return account, err
@@ -481,12 +493,12 @@ func (s *GeminiMessagesCompatService) listGroupSchedulableAccounts(ctx context.C
 	}
 
 	if groupID != nil {
-		return s.accountRepo.ListSchedulableByGroupIDAndPlatforms(ctx, *groupID, queryPlatforms)
+		return s.accountRepo.ListSchedulableByGroupIDAndPlatforms(ctx, *groupID, queryPlatforms) // relay:master-only 选号
 	}
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
-		return s.accountRepo.ListSchedulableByPlatforms(ctx, queryPlatforms)
+		return s.accountRepo.ListSchedulableByPlatforms(ctx, queryPlatforms) // relay:master-only 选号
 	}
-	return s.accountRepo.ListSchedulableUngroupedByPlatforms(ctx, queryPlatforms)
+	return s.accountRepo.ListSchedulableUngroupedByPlatforms(ctx, queryPlatforms) // relay:master-only 选号
 }
 
 func (s *GeminiMessagesCompatService) validateUpstreamBaseURL(raw string) (string, error) {
@@ -3153,9 +3165,14 @@ func (s *GeminiMessagesCompatService) handleGeminiUpstreamError(ctx context.Cont
 		var ra time.Time
 		if isCodeAssist || oauthType == "google_one" {
 			// Gemini CLI / Google One: fallback cooldown by tier
+			if s.cooldownReporter != nil {
+				// 从节点：档位冷却由主节点算（RateLimitService.GeminiCooldown）并写账号级限流。
+				s.cooldownReporter.ReportGeminiCooldown(account.ID)
+				return
+			}
 			cooldown := geminiCooldownForTier(tierID)
-			if s.rateLimitService != nil { // relay:pending Gemini 429 的整段处理随 Gemini 入口改为主节点判定（剩余事项总账）
-				cooldown = s.rateLimitService.GeminiCooldown(ctx, account) // relay:pending 同上
+			if s.rateLimitService != nil {
+				cooldown = s.rateLimitService.GeminiCooldown(ctx, account)
 			}
 			ra = time.Now().Add(cooldown)
 			if isCodeAssist {

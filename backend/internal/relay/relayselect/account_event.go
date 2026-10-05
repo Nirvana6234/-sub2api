@@ -121,9 +121,25 @@ func (s *selector) applyAccountEvent(nodeID int64, ev *relayv1.AccountEvent) {
 			return gw.RelaySetModelRateLimit(ctx, account, kind.ModelRateLimit.GetModelKey(), time.UnixMilli(kind.ModelRateLimit.GetResetAtUnixMs()))
 		})
 	case *relayv1.AccountEvent_RateLimited:
+		resetAt := time.UnixMilli(kind.RateLimited.GetResetAtUnixMs())
+		if s.geminiForwarded(account) {
+			// Gemini 转发路径（含 API Key 类型的 Antigravity 账号走的 Gemini 转发）上 429 的账号级限流。
+			if err := s.deps.Gemini.RelaySetRateLimited(ctx, account, resetAt); err != nil {
+				slog.Warn("relay gemini rate limit event failed", "node_id", nodeID, "account_id", account.ID, "error", err)
+			}
+			return
+		}
 		s.applyAntigravityEvent(nodeID, account, func(gw *service.AntigravityGatewayService) error {
-			return gw.RelaySetRateLimited(ctx, account, time.UnixMilli(kind.RateLimited.GetResetAtUnixMs()))
+			return gw.RelaySetRateLimited(ctx, account, resetAt)
 		})
+	case *relayv1.AccountEvent_GeminiCooldown:
+		if account.Platform == service.PlatformGemini && s.deps.Gemini != nil {
+			if err := s.deps.Gemini.RelayGeminiCooldown(ctx, account); err != nil {
+				slog.Warn("relay gemini cooldown event failed", "node_id", nodeID, "account_id", account.ID, "error", err)
+			}
+		}
+	case *relayv1.AccountEvent_StickyCleared:
+		s.applyStickyCleared(ctx, nodeID, account, kind.StickyCleared.GetSessionKey())
 	case *relayv1.AccountEvent_ModelRateLimitsExtra:
 		var limits map[string]any
 		if err := json.Unmarshal(kind.ModelRateLimitsExtra.GetLimitsJson(), &limits); err != nil {
@@ -181,6 +197,34 @@ func (s *selector) applyTempUnschedulable(ctx context.Context, nodeID int64, acc
 	}
 	if err := s.deps.AnthropicGateway.SetAccountTempUnschedulable(ctx, account.ID, until, reason); err != nil {
 		slog.Warn("relay temp unschedulable event failed", "node_id", nodeID, "account_id", account.ID, "error", err)
+	}
+}
+
+// geminiForwarded 报告这个账号在 Gemini 原生入口上由 Gemini 转发服务转发（Gemini 平台账号，和 API Key 类型的 Antigravity 账号）。
+func (s *selector) geminiForwarded(a *service.Account) bool {
+	if s.deps.Gemini == nil || a == nil {
+		return false
+	}
+	return a.Platform == service.PlatformGemini || (a.Platform == service.PlatformAntigravity && a.Type == service.AccountTypeAPIKey)
+}
+
+// applyStickyCleared 清掉转发路径上被清除的粘性会话绑定：只认这台节点正在转发的 Gemini 请求自己的会话键（从节点改不了别的会话）。
+func (s *selector) applyStickyCleared(ctx context.Context, nodeID int64, account *service.Account, key string) {
+	if s.deps.Gemini == nil || key == "" {
+		return
+	}
+	s.mu.Lock()
+	var groupID int64
+	owned := false
+	for _, sel := range s.selections {
+		if sel.nodeID == nodeID && sel.gemini && sel.account != nil && sel.account.ID == account.ID && sel.request != nil && sel.request.sessionKey == key {
+			groupID, owned = derefGroupID(sel.apiKey.GroupID), true
+			break
+		}
+	}
+	s.mu.Unlock()
+	if owned {
+		s.deps.Gemini.RelayClearStickySession(ctx, groupID, key)
 	}
 }
 

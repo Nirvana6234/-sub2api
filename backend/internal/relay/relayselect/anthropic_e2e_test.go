@@ -69,9 +69,10 @@ func TestNodeHandsOffAnthropicAccountTypesNotServedYet(t *testing.T) {
 // countingSticky 记下每次粘性会话绑定。
 type countingSticky struct {
 	nodegw.NoopGatewayCache
-	mu    sync.Mutex
-	bound map[string]int64
-	sets  int
+	mu      sync.Mutex
+	bound   map[string]int64
+	removed map[string]bool
+	sets    int
 }
 
 func (c *countingSticky) GetSessionAccountID(_ context.Context, _ int64, key string) (int64, error) {
@@ -81,6 +82,24 @@ func (c *countingSticky) GetSessionAccountID(_ context.Context, _ int64, key str
 		return id, nil
 	}
 	return 0, service.ErrStickySessionNotFound
+}
+
+func (c *countingSticky) DeleteSessionAccountID(_ context.Context, _ int64, key string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.bound, key)
+	if c.removed == nil {
+		c.removed = map[string]bool{}
+	}
+	c.removed[key] = true
+	return nil
+}
+
+// deleted 报告这个会话键的绑定被清掉过。
+func (c *countingSticky) deleted(key string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.removed[key]
 }
 
 func (c *countingSticky) SetSessionAccountID(_ context.Context, _ int64, key string, id int64, _ time.Duration) error {

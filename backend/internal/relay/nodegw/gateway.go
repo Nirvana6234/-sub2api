@@ -7,6 +7,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
+	"github.com/Wei-Shaw/sub2api/internal/relay/node"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -123,6 +124,13 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 			})
 		}
 	}
+	if gh != nil {
+		// Gemini 原生入口（SDK / CLI 直连）：链路对照本地 /v1beta 组（准入含 Google 格式的鉴权与错误、自动分组按 URL 模型、
+		// 分组模型白名单、组合平台选目标）。模型列表等 GET 请求不在这里，仍交给主节点。
+		gemini := r.Group("/v1beta", bodyLimit, middleware2.ClientRequestID(), handler.InboundEndpointMiddleware(),
+			d.AdmitMiddleware(), d.AutoGroupMiddleware(), middleware2.GroupModelAllowlist(), d.CompositeGeminiRouteMiddleware())
+		gemini.POST("/models/*modelAction", gh.GeminiV1BetaModels)
+	}
 	r.NoRoute(bodyLimit, func(c *gin.Context) {
 		body, err := readBody(c)
 		if err != nil {
@@ -144,6 +152,20 @@ func servesAnthropicRoutes(c *gin.Context, key *service.APIKey) bool {
 		return false
 	}
 	return key.Group == nil || servedPlatform(c, key) == service.PlatformAnthropic
+}
+
+// relayStickyCache 是 Antigravity 转发服务在从节点上的缓存：除了转发路径上清粘性会话绑定（限流、重试失败时）作为账号事件交给
+// 主节点（只认这次请求自己的会话键），其余同 NoopGatewayCache。
+type relayStickyCache struct {
+	NoopGatewayCache
+	reporter *node.RemoteAccountReporter
+}
+
+func (c relayStickyCache) DeleteSessionAccountID(ctx context.Context, _ int64, sessionKey string) error {
+	if a := attemptFrom(ctx); a != nil && c.reporter != nil {
+		c.reporter.StickySessionCleared(a.accountID, sessionKey)
+	}
+	return nil
 }
 
 // NoopGatewayCache 是从节点上的网关缓存：粘性会话在主节点（选号时读、释放时写），这里一律"没有"；

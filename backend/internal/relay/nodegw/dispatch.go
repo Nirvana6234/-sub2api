@@ -90,6 +90,8 @@ type attemptState struct {
 	reservation *node.Reservation
 	// userID、apiKeyID：WebSocket 每一轮报手里的额度用。
 	userID, apiKeyID int64
+	// accountID：这次尝试用的账号（转发路径上的账号事件按它关联）。
+	accountID int64
 	// turnCalls：这条 WebSocket 连接选号上调过几次 BeginTurn（幂等键用）。
 	turnCalls atomic.Uint32
 	// turnID：WebSocket 这一轮的 ID（主节点回的，轮结束时带回）。
@@ -182,6 +184,8 @@ func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler
 	clientIP := strings.TrimSpace(ip.GetClientIP(c))
 	endpoint := relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_RESPONSES
 	switch {
+	case req.Gemini:
+		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_GEMINI_NATIVE
 	case req.CountTokens:
 		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_COUNT_TOKENS
 	case req.Anthropic:
@@ -215,6 +219,7 @@ func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler
 		MetadataUserId:          req.MetadataUserID,
 		InterceptType:           int32(req.InterceptType),
 		FallbackGroupId:         st.fallbackGroupID,
+		GeminiDigestChain:       req.GeminiDigestChain,
 	}
 	if st.fallbackGroupID != 0 {
 		// Key 现在是换了分组的副本，自动分组的"当前分组"仍是切换之前的。
@@ -235,14 +240,20 @@ func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler
 	for id := range req.Excluded {
 		sreq.ExcludedAccountIds = append(sreq.ExcludedAccountIds, id)
 	}
-	if !req.Anthropic && d.deps.CyberEnabled != nil && d.deps.CyberEnabled(c.Request.Context()) {
+	if !req.Anthropic && !req.Gemini && d.deps.CyberEnabled != nil && d.deps.CyberEnabled(c.Request.Context()) {
 		l := service.NewCyberSessionLookup(req.APIKey.ID, c, req.Body, clientIP, c.GetHeader("User-Agent"))
 		sreq.Cyber = &relayv1.CyberSessionLookup{
 			ExplicitKey: l.ExplicitKey, ScopeKey: l.ScopeKey, TranscriptKeys: l.TranscriptKeys, TranscriptTruncated: l.TranscriptTruncated,
 			PreLatestUserKey: l.PreLatestUserKey,
 		}
 	}
-	if st.rawBody != nil {
+	switch {
+	case req.Gemini:
+		// Gemini 原生入口的白名单按 URL 里的模型校验（本地 GroupModelAllowlist 先取路由参数；组合平台选目标之前的公开模型）。
+		if m := requestmodel.GeminiModelFromRouteParams(c.Param("model"), c.Param("modelAction")); m != "" {
+			sreq.ModelCandidates = []string{m}
+		}
+	case st.rawBody != nil:
 		sreq.ModelCandidates = requestmodel.FromBodyCandidates(c.FullPath(), c.GetHeader("Content-Type"), st.rawBody)
 	}
 	if req.APIKey.User != nil {
@@ -304,6 +315,7 @@ func (d *Dispatcher) admitSelection(c *gin.Context, st *requestState, req handle
 	if err != nil {
 		return fail("relay account credentials unavailable", err, &handler.OpenAIRelayRejection{Kind: handler.OpenAIRelayRejectUnavailable})
 	}
+	a.accountID = account.ID
 	if parent != nil {
 		ctx = service.WithCredentialParent(ctx, parent)
 	}

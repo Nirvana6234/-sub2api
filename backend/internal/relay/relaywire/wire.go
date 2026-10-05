@@ -54,6 +54,7 @@ func ProvideMasterRuntime(
 	userMsgQueue service.UserMsgQueueCache,
 	rpm service.RPMCache,
 	antigravity *service.AntigravityGatewayService,
+	gemini *service.GeminiMessagesCompatService,
 ) *master.Runtime {
 	// 用户、分组、订阅作废时发布改动（平台配额在仓储层已接好，见 repository/wire.go）。
 	service.AttachAccessChangeHub(accessChanges, apiKeys, billing)
@@ -70,7 +71,7 @@ func ProvideMasterRuntime(
 		NewSelector: relayselect.NewFactory(relayselect.Deps{
 			Config: cfg, APIKeys: apiKeys, Subscriptions: subscriptions, Settings: settingService,
 			Billing: billing, Gateway: gateway, AnthropicGateway: anthropicGateway, Concurrency: concurrency,
-			UserMsgQueue: userMsgQueue, RPM: rpm, Antigravity: antigravity,
+			UserMsgQueue: userMsgQueue, RPM: rpm, Antigravity: antigravity, Gemini: gemini,
 			Moderation: moderation, Composite: composite, Ops: ops, Users: users,
 		}),
 		VoucherPartitions: repository.NewRelayVoucherPartitions(db),

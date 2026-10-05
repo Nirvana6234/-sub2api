@@ -28,7 +28,8 @@ func (s *selector) Select(ctx context.Context, nodeID int64, req *relayv1.Select
 		relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_MESSAGES:
 	case relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_RESPONSES_WS:
 		ws = true
-	case relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_MESSAGES, relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_COUNT_TOKENS:
+	case relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_MESSAGES, relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_COUNT_TOKENS,
+		relayv1.SelectEndpoint_SELECT_ENDPOINT_GEMINI_NATIVE:
 	default:
 		return unsupported(), nil
 	}
@@ -44,6 +45,8 @@ func (s *selector) Select(ctx context.Context, nodeID int64, req *relayv1.Select
 		resp, err = s.selectAnthropic(ctx, nodeID, req)
 	case req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_COUNT_TOKENS:
 		resp, err = s.selectAnthropicCountTokens(ctx, nodeID, req)
+	case req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_GEMINI_NATIVE:
+		resp, err = s.selectGeminiNative(ctx, nodeID, req)
 	default:
 		resp, err = s.selectOpenAI(ctx, nodeID, req)
 	}
@@ -281,7 +284,7 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 // Admit 准入（设计 3.2）：中间件链的检查，不含分组模型白名单（从节点用快照里的分组在本地跑那个中间件，
 // 保持与单机相同的检查顺序；选号时这里再按请求里的模型名查一遍）。
 func (s *selector) Admit(ctx context.Context, nodeID int64, req *relayv1.AdmitRequest) (*relayv1.AdmitResponse, error) {
-	adm, rej, err := s.admitAPIKey(ctx, req.GetApiKey(), req.GetClientIp(), req.GetMethod(), req.GetPath(), nil, autoGroupChoice{coldStart: true}, relayServedPlatforms...)
+	adm, rej, err := s.admitAPIKey(ctx, req.GetApiKey(), req.GetClientIp(), req.GetMethod(), req.GetPath(), nil, autoGroupChoice{coldStart: true}, relayServedFor(req.GetPath())...)
 	if err != nil {
 		return nil, err
 	}
@@ -391,7 +394,17 @@ var (
 	anthropicServedPlatforms = []string{service.PlatformAnthropic, service.PlatformComposite, noGroupPlatform}
 	// relayServedPlatforms 是准入、定走向时放行的分组平台（哪个入口接由从节点的路由按分组平台再分）。
 	relayServedPlatforms = []string{service.PlatformOpenAI, service.PlatformComposite, service.PlatformAnthropic, noGroupPlatform}
+	// geminiServedPlatforms 是 Gemini 原生入口（/v1beta）经从节点能接的分组平台（组合平台分组只接选到 Gemini 或没有匹配目标的）。
+	geminiServedPlatforms = []string{service.PlatformGemini, service.PlatformComposite}
 )
+
+// relayServedFor 是准入、定走向时放行的分组平台：Gemini 原生入口只放 Gemini（及组合平台），其余入口按 relayServedPlatforms。
+func relayServedFor(path string) []string {
+	if middleware.IsGoogleRelayPath(path) {
+		return geminiServedPlatforms
+	}
+	return relayServedPlatforms
+}
 
 // startRequest 是一次请求的第一次选号时做的：用户并发槽、计费资格、（cyberAfterBilling 时）cyber 会话屏蔽、
 // 计价上下文。被拒时返回拒绝（调用方放掉用户槽）。
@@ -403,6 +416,10 @@ func (s *selector) startRequest(ctx context.Context, record *requestRecord, req 
 	record.userID, record.apiKeyID = apiKey.User.ID, apiKey.ID
 	release, err := s.helper.AcquireUserSlotWithWaitNoGin(ctx, apiKey.User.ID, apiKey.ID, apiKey.User.Concurrency)
 	if err != nil {
+		if middleware.IsGoogleRelayPath(req.GetPath()) {
+			// Gemini 原生入口的用户槽错误取自错误本身（本地 GeminiV1BetaModels）。
+			return gatewayRejection(handler.GeminiUserSlotRejection(err))
+		}
 		return gatewayRejection(handler.OpenAIConcurrencyRejection(err, "user"))
 	}
 	record.userRelease = release

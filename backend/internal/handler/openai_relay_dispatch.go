@@ -107,6 +107,11 @@ type OpenAIRelaySelectRequest struct {
 	InterceptType  InterceptType
 	// CountTokens：Anthropic 的 /v1/messages/count_tokens（不占槽、不计费、没有凭证）。
 	CountTokens bool
+
+	// Gemini：Gemini 原生入口（GeminiV1BetaModels）。SessionHash 是 CLI / 通用会话哈希（不带 "gemini:" 前缀），
+	// GeminiDigestChain 是请求体的内容摘要链；会话键、内容摘要会话匹配都在主节点。
+	Gemini            bool
+	GeminiDigestChain string
 }
 
 // OpenAIRelaySelectResult 是一次远程选号的结果：Attempt 与 Rejection 二选一。

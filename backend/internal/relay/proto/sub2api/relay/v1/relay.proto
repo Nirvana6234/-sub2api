@@ -516,6 +516,10 @@ enum SelectEndpoint {
   // Anthropic 的 /v1/messages/count_tokens（GatewayHandler.CountTokens）：计费资格检查后按模型选一个账号，不占槽、
   // 不计费（没有凭证、不给额度）；上游没服务时释放放掉会话数注册。
   SELECT_ENDPOINT_ANTHROPIC_COUNT_TOKENS = 6;
+  // Gemini 原生入口（/v1beta/models/{model}:{action}，GatewayHandler.GeminiV1BetaModels）。与 Anthropic Messages 一样一轮只做
+  // 选号与准入，换号状态在从节点；会话（粘性键、内容摘要会话）整段在主节点：从节点只带 session_hash（CLI / 通用会话哈希）和
+  // gemini_digest_chain，主节点回最终的会话键（Selection.session_hash）和绑定的账号（sticky_bound_account_id）。
+  SELECT_ENDPOINT_GEMINI_NATIVE = 7;
 }
 
 message AdmitRequest {
@@ -719,6 +723,9 @@ message SelectRequest {
   // Anthropic Messages：这次请求已经切到的兜底分组（Antigravity 回 prompt 过长时本地换到
   // FallbackGroupIDOnInvalidRequest 重试）。主节点核对是这把 Key 的分组配置的兜底分组再用，非 0 时选号、计费都按它。
   int64 fallback_group_id = 31;
+  // Gemini 原生入口：请求体的内容摘要链（service.BuildGeminiDigestChain；没有可摘要的内容时为空）。粘性会话没有绑定时
+  // 主节点按它做摘要会话匹配（需要客户端 IP、User-Agent，选号请求里已有）。
+  string gemini_digest_chain = 32;
 }
 
 // cyber 会话屏蔽的查询键（都已哈希）。
@@ -1015,6 +1022,7 @@ enum UsageRecordKind {
   // 只有上游已报的 token，按入账时计价）。
   USAGE_RECORD_KIND_OPENAI_CYBER_POLICY = 2;
   // Anthropic 网关（service.GatewayService.RecordUsage，GatewayHandler.Messages）：result_json 是 service.ForwardResult。
+  // Gemini 原生入口（GeminiV1BetaModels）的记录也用这一种（同一个入账函数、同样的输入）。
   USAGE_RECORD_KIND_ANTHROPIC = 3;
 }
 
@@ -1102,7 +1110,19 @@ message AccountEvent {
     RateLimitedEvent rate_limited = 20;
     ModelRateLimitsExtraEvent model_rate_limits_extra = 21;
     Internal500Event internal500 = 22;
+    // Gemini 原生入口转发路径上的账号状态：429 没有上游给的重置时间时的档位冷却（主节点算）、转发时要清掉的粘性会话绑定。
+    GeminiCooldownEvent gemini_cooldown = 23;
+    StickySessionClearedEvent sticky_cleared = 24;
   }
+}
+
+// Gemini（Code Assist / Google One）账号收到 429、上游没给重置时间：冷却时长按档位定（RateLimitService.GeminiCooldown，在主节点），
+// 主节点据此写账号级限流。
+message GeminiCooldownEvent {}
+
+// 转发路径上清掉了粘性会话绑定（Antigravity 限流、重试失败）：主节点只认这次请求自己的会话键。
+message StickySessionClearedEvent {
+  string session_key = 1;
 }
 
 message ModelRateLimitEvent {

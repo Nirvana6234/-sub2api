@@ -289,10 +289,13 @@ func newWorldOn(t *testing.T, cfg *config.Config, balance float64, nodeID int64,
 	t.Helper()
 	anthropic := openAIGroup(9)
 	anthropic.Platform = service.PlatformAnthropic
+	gemini := openAIGroup(10)
+	gemini.Platform = service.PlatformGemini
 	keys := fakeKeys{keys: map[string]*service.APIKey{
 		"sk-a":         testKey("sk-a", 11, openAIGroup(5)),
 		"sk-b":         testKey("sk-b", 12, openAIGroup(5)),
 		"sk-anthropic": testKey("sk-anthropic", 13, anthropic),
+		"sk-gemini":    testKey("sk-gemini", 14, gemini),
 	}}
 	slots := &countingSlots{}
 	concurrency := service.NewConcurrencyService(slots)
@@ -329,12 +332,14 @@ func newWorldOn(t *testing.T, cfg *config.Config, balance float64, nodeID int64,
 	groupRepo := &memGroups{byID: map[int64]*service.Group{}}
 	anthropicGateway := service.NewGatewayService(fakeAccounts{accounts: accounts}, groupRepo, nil, nil, nil, nil, nil, gatewayCache, cfg,
 		nil, concurrency, nil, nil, billing, service.NewIdentityService(identity), nil, nil,
-		service.NewClaudeTokenProvider(nil, seededTokens{}, nil), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		service.NewClaudeTokenProvider(nil, seededTokens{}, nil), nil, nil, service.NewDigestSessionStore(), nil, nil, nil, nil, nil, nil, nil)
+	geminiCompat := service.NewGeminiMessagesCompatService(fakeAccounts{accounts: accounts}, groupRepo, gatewayCache, nil,
+		service.NewGeminiTokenProvider(nil, seededTokens{}, nil), nil, nil, nil, cfg)
 
 	sel := newSelector(Deps{
 		Config: cfg, APIKeys: service.NewAPIKeyService(keys, nil, nil, nil, nil, nil, cfg),
 		Settings: service.NewSettingService(memSettings{values: map[string]string{}}, cfg),
-		Billing:  billing, Gateway: gateway, AnthropicGateway: anthropicGateway, Concurrency: concurrency,
+		Billing:  billing, Gateway: gateway, AnthropicGateway: anthropicGateway, Concurrency: concurrency, Gemini: geminiCompat,
 	}, master.SelectEnv{
 		Epoch:  "epoch-1",
 		Quotas: quotas,

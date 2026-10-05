@@ -37,6 +37,9 @@ type Deps struct {
 	// Antigravity 是 Antigravity 账号的转发服务：主节点用它取 Google token、照写从节点转发路径上的账号状态
 	// （模型级限流、账号级限流、INTERNAL 500 惩罚）；nil 时 Antigravity 账号交给主节点转发。
 	Antigravity *service.AntigravityGatewayService
+	// Gemini 是 Gemini 原生入口的转发服务：主节点用它的 token 提供者取 Gemini OAuth / 服务账号的 access token，并照写从节点
+	// 转发路径上的账号状态（429 的账号级限流、清粘性会话绑定）；nil 时 Gemini 账号交给主节点转发。
+	Gemini *service.GeminiMessagesCompatService
 	// UserMsgQueue、RPM 是用户消息串行队列的锁与账号 RPM 计数（从节点的排队代码每一步在这里执行）；nil 时放行。
 	UserMsgQueue service.UserMsgQueueCache
 	RPM          service.RPMCache
@@ -119,8 +122,13 @@ type requestRecord struct {
 	// singleAccountRetry：分组里只有一个 Antigravity 账号（请求开始时查一次，随选号带给从节点）。
 	singleAccountRetry bool
 	// sessionKey、stickyBound：Anthropic Messages 的会话键和请求开始时粘性会话绑定的账号（成功转发后刷新绑定用）。
+	// Gemini 原生入口：最终的会话键（含摘要会话匹配的结果）和绑定的账号。
 	sessionKey  string
 	stickyBound int64
+	// stickyPrefetch：Gemini 请求开始时直接查到的粘性绑定（选号 ctx 里预取；摘要会话匹配到的不算）。
+	stickyPrefetch int64
+	// geminiDigest：Gemini 内容摘要会话在这次请求里的状态。
+	geminiDigest *geminiDigestSession
 	// userRelease 放掉用户并发槽（请求结束时）。
 	userRelease func()
 	// pricingCtx 带着本请求固定的计价时间和利润门（不带取消），每次选号在它上面挂上调用的取消。
@@ -165,6 +173,8 @@ type selectionRecord struct {
 	channelGroupID int64
 	// countTokens：Anthropic count_tokens 的选号（不占槽、不计费；释放时只放会话数注册）。
 	countTokens bool
+	// gemini：Gemini 原生入口的选号（释放时保存内容摘要会话）。
+	gemini bool
 }
 
 func newSelector(d Deps, env master.SelectEnv) *selector {
@@ -334,6 +344,9 @@ func (s *selector) release(nodeID int64, rel *relayv1.SelectionRelease) {
 	if sel.anthropic && sel.account != nil {
 		s.releaseAnthropicAttempt(sel, rel)
 	}
+	if sel.gemini && sel.account != nil {
+		s.releaseGeminiAttempt(sel, rel)
+	}
 	if len(rel.GetResponseIds()) > 0 && sel.account != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		for _, id := range rel.GetResponseIds() {
@@ -396,6 +409,22 @@ func (s *selector) encodeAccount(ctx context.Context, nodeID int64, account *ser
 		}
 		overrides = map[string]any{"access_token": token}
 		if project := account.GetCredential("project_id"); project != "" {
+			overrides["project_id"] = project
+		}
+	case s.deps.Gemini != nil && account.Platform == service.PlatformGemini &&
+		(account.Type == service.AccountTypeOAuth || account.Type == service.AccountTypeServiceAccount):
+		// Gemini 的 OAuth（Code Assist / Google One / AI Studio）和服务账号（Vertex）：与本地转发时同一个取 token（快过期时当场
+		// 刷新，缺项目 ID 时自动探测补上）；刷新 token、服务账号文件不下发。
+		token, err := s.deps.Gemini.GetTokenProvider().GetAccessToken(ctx, account)
+		if err != nil {
+			return nil, err
+		}
+		overrides = map[string]any{"access_token": token}
+		if account.Type == service.AccountTypeServiceAccount {
+			if project := account.VertexProjectID(); project != "" {
+				overrides["project_id"] = project
+			}
+		} else if project := account.GetCredential("project_id"); project != "" {
 			overrides["project_id"] = project
 		}
 	case s.deps.AnthropicGateway != nil && account.Platform == service.PlatformAnthropic &&

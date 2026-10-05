@@ -33,6 +33,10 @@ func (d *Dispatcher) AutoGroupMiddleware() gin.HandlerFunc {
 		}
 		model := requestmodel.RoutingModel(c.GetHeader("Content-Type"), stateOf(c).rawBody)
 		if model == "" {
+			// Gemini 原生 URL 里的模型（本地 autoGroupModelRouting 同一个取法）。
+			model = requestmodel.GeminiModelFromRouteParams(c.Param("model"), c.Param("modelAction"))
+		}
+		if model == "" {
 			model = requestmodel.DefaultAutoGroupModel(c.Request.URL.Path)
 		}
 		if model == "" {
@@ -228,6 +232,45 @@ func (d *Dispatcher) CompositeRouteMiddleware() gin.HandlerFunc {
 			}
 		}
 		requestmodel.ResetRequestBody(c.Request, body)
+		c.Next()
+	}
+}
+
+// CompositeGeminiRouteMiddleware 是从节点上 Gemini 原生入口的组合平台选目标（本地 compositeGeminiTargetPlatformMiddleware）：
+// 模型取自 URL（请求体里没有），不改请求体；没有匹配的目标时按 Gemini。
+func (d *Dispatcher) CompositeGeminiRouteMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		apiKey, ok := middleware2.GetAPIKeyFromContext(c)
+		if ok && apiKey != nil && apiKey.Group != nil && apiKey.Group.Platform == service.PlatformComposite {
+			if model := requestmodel.GeminiModelFromRouteParams(c.Param("model"), c.Param("modelAction")); model != "" {
+				resp, err := d.deps.Select.ResolveRoute(c.Request.Context(), &relayv1.ResolveRouteRequest{
+					ApiKey: apiKey.Key, ClientIp: strings.TrimSpace(ip.GetClientIP(c)), Method: c.Request.Method,
+					Path: c.Request.URL.Path, Model: model, AutoGroupId: autoGroupID(apiKey),
+				})
+				var decision service.CompositeRouteDecision
+				if err == nil && resp.GetRejection() == nil {
+					err = json.Unmarshal(resp.GetResolution().GetCompositeDecision(), &decision)
+				}
+				if err != nil {
+					// 与本地选目标出错时的写法一致。
+					slog.Warn("relay composite route resolution failed", "error", err)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"type": "server_error", "message": "Failed to resolve composite model route"}})
+					c.Abort()
+					return
+				}
+				if r := resp.GetRejection(); r != nil {
+					writeRouteRejection(c, d, r)
+					return
+				}
+				stateOf(c).routeModel = model
+				if decision.Matched {
+					c.Request = c.Request.WithContext(service.WithCompositeRouteDecision(c.Request.Context(), decision))
+				}
+			}
+			if _, resolved := service.ResolvedTargetPlatformFromContext(c.Request.Context()); !resolved {
+				c.Request = c.Request.WithContext(service.WithResolvedTargetPlatform(c.Request.Context(), service.PlatformGemini))
+			}
+		}
 		c.Next()
 	}
 }

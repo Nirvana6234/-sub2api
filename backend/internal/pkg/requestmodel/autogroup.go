@@ -68,3 +68,19 @@ func DefaultAutoGroupModel(path string) string {
 		return ""
 	}
 }
+
+// GeminiModelFromRouteParams 是 Gemini 原生 URL 里的模型名：路由参数 model（GET /models/:model），或 modelAction
+// （POST /models/*modelAction，去掉前导斜杠和 ":action" 后缀）。自动分组、组合平台在请求体里没有模型时按它选。
+func GeminiModelFromRouteParams(model, modelAction string) string {
+	if m := strings.TrimSpace(model); m != "" {
+		return m
+	}
+	modelAction = strings.TrimPrefix(strings.TrimSpace(modelAction), "/")
+	if modelAction == "" {
+		return ""
+	}
+	if idx := strings.LastIndex(modelAction, ":"); idx >= 0 {
+		return strings.TrimSpace(modelAction[:idx])
+	}
+	return modelAction
+}

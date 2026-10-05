@@ -172,6 +172,12 @@ func (p *GeminiTokenProvider) GetAccessToken(ctx context.Context, account *Accou
 }
 
 func (p *GeminiTokenProvider) getServiceAccountAccessToken(ctx context.Context, account *Account) (string, error) {
+	if _, err := parseVertexServiceAccountKey(account); err != nil {
+		// 主从分流的从节点：服务账号文件不下发，主节点换好的 token 随凭据下发（单机服务账号的凭据里没有 access_token）。
+		if token := strings.TrimSpace(account.GetCredential("access_token")); token != "" {
+			return token, nil
+		}
+	}
 	return getVertexServiceAccountAccessToken(ctx, p.tokenCache, account)
 }
 

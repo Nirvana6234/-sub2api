@@ -145,6 +145,18 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 			_, _ = io.WriteString(w, `{"error":{"code":"cyber_policy","message":"blocked by policy","type":"invalid_request_error"}}`)
 			return
 		}
+		if strings.HasPrefix(r.URL.Path, "/v1beta/models/") {
+			// Gemini 原生（AI Studio API Key 账号）。
+			const candidates = `"candidates":[{"content":{"role":"model","parts":[{"text":"hello"}]},"finishReason":"STOP"}],` +
+				`"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":3,"totalTokenCount":8}`
+			if strings.HasSuffix(r.URL.Path, ":streamGenerateContent") {
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = io.WriteString(w, "data: {"+candidates+"}\n\n")
+				return
+			}
+			_, _ = io.WriteString(w, "{"+candidates+"}")
+			return
+		}
 		if strings.Contains(r.URL.Path, ":streamGenerateContent") {
 			// Antigravity（Google 内部接口）：上下文超长时回 400，账号标了 429 前缀时回 429，否则回一段流。
 			if bytes.Contains(body, []byte("too-long-trigger")) {
