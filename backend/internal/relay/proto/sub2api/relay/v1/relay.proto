@@ -530,6 +530,10 @@ enum SelectEndpoint {
   // OpenAI 分组的同步图片入口（/v1/images/generations、/v1/images/edits，OpenAIGatewayHandler.Images）：按 required_capability 选
   // 账号（SelectAccountWithSchedulerForImages，不装利润门、只走 HTTP/SSE），选号用请求的路由模型（渠道映射只在转发时用）。
   SELECT_ENDPOINT_OPENAI_IMAGES = 11;
+  // OpenAI 分组的两个 token 计数入口：POST /v1/responses/input_tokens（OpenAI 格式的错误）和 POST /v1/messages/count_tokens
+  // （Anthropic 格式的错误）。计费资格检查后按模型选一个账号（不占槽、不装利润门），不计费（没有凭证、不给额度）。
+  SELECT_ENDPOINT_OPENAI_INPUT_TOKENS = 12;
+  SELECT_ENDPOINT_OPENAI_COUNT_TOKENS = 13;
 }
 
 message AdmitRequest {

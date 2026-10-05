@@ -236,6 +236,10 @@ const (
 	// OpenAI 分组的同步图片入口（/v1/images/generations、/v1/images/edits，OpenAIGatewayHandler.Images）：按 required_capability 选
 	// 账号（SelectAccountWithSchedulerForImages，不装利润门、只走 HTTP/SSE），选号用请求的路由模型（渠道映射只在转发时用）。
 	SelectEndpoint_SELECT_ENDPOINT_OPENAI_IMAGES SelectEndpoint = 11
+	// OpenAI 分组的两个 token 计数入口：POST /v1/responses/input_tokens（OpenAI 格式的错误）和 POST /v1/messages/count_tokens
+	// （Anthropic 格式的错误）。计费资格检查后按模型选一个账号（不占槽、不装利润门），不计费（没有凭证、不给额度）。
+	SelectEndpoint_SELECT_ENDPOINT_OPENAI_INPUT_TOKENS SelectEndpoint = 12
+	SelectEndpoint_SELECT_ENDPOINT_OPENAI_COUNT_TOKENS SelectEndpoint = 13
 )
 
 // Enum value maps for SelectEndpoint.
@@ -253,6 +257,8 @@ var (
 		9:  "SELECT_ENDPOINT_GATEWAY_CHAT",
 		10: "SELECT_ENDPOINT_OPENAI_EMBEDDINGS",
 		11: "SELECT_ENDPOINT_OPENAI_IMAGES",
+		12: "SELECT_ENDPOINT_OPENAI_INPUT_TOKENS",
+		13: "SELECT_ENDPOINT_OPENAI_COUNT_TOKENS",
 	}
 	SelectEndpoint_value = map[string]int32{
 		"SELECT_ENDPOINT_UNSPECIFIED":            0,
@@ -267,6 +273,8 @@ var (
 		"SELECT_ENDPOINT_GATEWAY_CHAT":           9,
 		"SELECT_ENDPOINT_OPENAI_EMBEDDINGS":      10,
 		"SELECT_ENDPOINT_OPENAI_IMAGES":          11,
+		"SELECT_ENDPOINT_OPENAI_INPUT_TOKENS":    12,
+		"SELECT_ENDPOINT_OPENAI_COUNT_TOKENS":    13,
 	}
 )
 
@@ -9690,7 +9698,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\vBillingMode\x12\x1c\n" +
 	"\x18BILLING_MODE_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14BILLING_MODE_BALANCE\x10\x01\x12\x1d\n" +
-	"\x19BILLING_MODE_SUBSCRIPTION\x10\x02*\xd0\x03\n" +
+	"\x19BILLING_MODE_SUBSCRIPTION\x10\x02*\xa2\x04\n" +
 	"\x0eSelectEndpoint\x12\x1f\n" +
 	"\x1bSELECT_ENDPOINT_UNSPECIFIED\x10\x00\x12$\n" +
 	" SELECT_ENDPOINT_OPENAI_RESPONSES\x10\x01\x12\x1f\n" +
@@ -9704,7 +9712,9 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x1cSELECT_ENDPOINT_GATEWAY_CHAT\x10\t\x12%\n" +
 	"!SELECT_ENDPOINT_OPENAI_EMBEDDINGS\x10\n" +
 	"\x12!\n" +
-	"\x1dSELECT_ENDPOINT_OPENAI_IMAGES\x10\v*\x9b\x02\n" +
+	"\x1dSELECT_ENDPOINT_OPENAI_IMAGES\x10\v\x12'\n" +
+	"#SELECT_ENDPOINT_OPENAI_INPUT_TOKENS\x10\f\x12'\n" +
+	"#SELECT_ENDPOINT_OPENAI_COUNT_TOKENS\x10\r*\x9b\x02\n" +
 	"\x0fRejectionFormat\x12 \n" +
 	"\x1cREJECTION_FORMAT_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18REJECTION_FORMAT_GATEWAY\x10\x01\x12\x18\n" +

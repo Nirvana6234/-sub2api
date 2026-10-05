@@ -91,9 +91,13 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 	}
 	openAIOnly := func(next gin.HandlerFunc) gin.HandlerFunc { return byPlatform(next, nil) }
 	responses := byPlatform(func(c *gin.Context) {
-		if !service.IsForwardableOpenAIResponsesRequestPath(c) || service.IsOpenAIResponsesInputTokensRequestPath(c) {
-			// 不可转发的子路径与 input_tokens 由主节点照原逻辑处理。
+		if !service.IsForwardableOpenAIResponsesRequestPath(c) {
+			// 不可转发的子路径由主节点照原逻辑处理。
 			d.HandOff(c)
+			return
+		}
+		if service.IsOpenAIResponsesInputTokensRequestPath(c) {
+			h.ResponsesInputTokens(c)
 			return
 		}
 		h.Responses(c)
@@ -106,15 +110,9 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 		gh.Responses(c)
 	})
 	chatCompletions := byPlatform(h.ChatCompletions, func(c *gin.Context) { gh.ChatCompletions(c) })
-	countTokens := func(c *gin.Context) {
-		// 与本地 countTokensHandler 一样按分组平台分：Anthropic 分组走 Messages 处理函数的 count_tokens；
-		// OpenAI 兼容平台的（上游桥接、Grok 本地估算）还没接入。
-		if key, ok := middleware2.GetAPIKeyFromContext(c); ok && gh != nil && servesAnthropicRoutes(c, key) {
-			gh.CountTokens(c)
-			return
-		}
-		d.HandOff(c)
-	}
+	// 与本地 countTokensHandler 一样按分组平台分：OpenAI 分组走 OpenAI 网关的 count_tokens，Anthropic / Gemini / Antigravity 平台的分组走
+	// Messages 处理函数的 count_tokens；其余平台（Grok 本地估算、国产兼容平台）还没接入。
+	countTokens := byPlatform(h.CountTokens, func(c *gin.Context) { gh.CountTokens(c) })
 	for _, prefix := range []string{"/v1", ""} {
 		g := r.Group(prefix, chain...)
 		g.POST("/messages/count_tokens", countTokens)

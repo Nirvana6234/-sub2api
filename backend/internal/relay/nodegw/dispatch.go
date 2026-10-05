@@ -194,6 +194,10 @@ func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler
 		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_EMBEDDINGS
 	case req.Images:
 		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_IMAGES
+	case req.InputTokens:
+		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_INPUT_TOKENS
+	case req.OpenAICountTokens:
+		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_COUNT_TOKENS
 	case req.CountTokens:
 		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_COUNT_TOKENS
 	case req.Anthropic:
@@ -249,7 +253,7 @@ func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler
 	for id := range req.Excluded {
 		sreq.ExcludedAccountIds = append(sreq.ExcludedAccountIds, id)
 	}
-	if !req.Anthropic && !req.Gemini && !req.GatewayResponses && !req.GatewayChat && !req.Embeddings && !req.Images && d.deps.CyberEnabled != nil && d.deps.CyberEnabled(c.Request.Context()) {
+	if !req.Anthropic && !req.Gemini && !req.GatewayResponses && !req.GatewayChat && !req.Embeddings && !req.Images && !req.InputTokens && !req.OpenAICountTokens && d.deps.CyberEnabled != nil && d.deps.CyberEnabled(c.Request.Context()) {
 		l := service.NewCyberSessionLookup(req.APIKey.ID, c, req.Body, clientIP, c.GetHeader("User-Agent"))
 		sreq.Cyber = &relayv1.CyberSessionLookup{
 			ExplicitKey: l.ExplicitKey, ScopeKey: l.ScopeKey, TranscriptKeys: l.TranscriptKeys, TranscriptTruncated: l.TranscriptTruncated,

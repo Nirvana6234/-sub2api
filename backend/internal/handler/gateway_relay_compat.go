@@ -211,3 +211,19 @@ func OpenAIImagesNoAccountRejection(ctx context.Context, diag service.ModelAvail
 	}
 	return r
 }
+
+// OpenAICountTokensNoAccountRejection：OpenAI 分组两个 token 计数入口选不出账号时的错误（本地：按模型不存在分类；anthropic 为
+// true 时按 Anthropic 格式写，selectErr 为 nil 表示只是没选出账号）。
+func OpenAICountTokensNoAccountRejection(ctx context.Context, diag service.ModelAvailabilityDiagnoser, apiKey *service.APIKey, routingModel, displayModel string, anthropic bool, selectErr error) OpenAIGatewayRejection {
+	cls := classifyNoAccountError(ctx, diag, apiKey, routingModel, displayModel, openAICompatibleRequestPlatform(ctx, apiKey))
+	r := OpenAIGatewayRejection{Status: cls.Status, ErrType: cls.ErrType, Message: cls.Message, Anthropic: anthropic}
+	switch {
+	case cls.ModelNotFound:
+		r.OpsBusinessLimitedReason = service.OpsClientBusinessLimitedReasonLocalModelConfiguration
+	case selectErr == nil:
+		r.RoutingCapacityLimited = true
+	default:
+		r.RoutingCapacityLimited = isOpsNoAvailableAccountError(selectErr)
+	}
+	return r
+}

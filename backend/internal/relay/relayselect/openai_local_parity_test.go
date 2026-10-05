@@ -124,3 +124,45 @@ func TestNodeServesImagesLikeASingleServer(t *testing.T) {
 	require.Equal(t, localStatus, nodeStatus)
 	require.Equal(t, localBody, nodeBody)
 }
+
+// OpenAI 分组的两个 token 计数入口经从节点：与单机同请求的响应一致；不计费（没有扣费记录）。
+func TestNodeServesOpenAITokenCountingLikeASingleServer(t *testing.T) {
+	accounts := []service.Account{apiKeyAccount(1, "one")}
+	e := startStandardE2E(t, func(upstream string) []service.Account {
+		accounts[0].Credentials["base_url"] = upstream
+		accounts[0].AccountGroups = []service.AccountGroup{{AccountID: 1, GroupID: 5}}
+		return accounts
+	})
+	e.world.keys.keys["sk-a"].Group.AllowMessagesDispatch = true
+	routes := func(g *gin.RouterGroup, h *handler.OpenAIGatewayHandler) {
+		g.POST("/messages/count_tokens", h.CountTokens)
+		g.POST("/responses/input_tokens", h.ResponsesInputTokens)
+	}
+	local := startLocalOpenAI(t, e, accounts, routes)
+	for _, tc := range []struct{ path, body string }{
+		{"/v1/messages/count_tokens", `{"model":"gpt-5","messages":[{"role":"user","content":"hi"}]}`},
+		{"/v1/responses/input_tokens", `{"model":"gpt-5","input":"hi"}`},
+	} {
+		nodeStatus, nodeBody := e.post(t, tc.path, "sk-a", tc.body)
+		e.world.waitReleased(t)
+		localStatus, localBody := local.post(t, tc.path, "sk-a", tc.body)
+		require.Equal(t, http.StatusOK, localStatus, tc.path+" "+localBody)
+		require.Equal(t, localStatus, nodeStatus, nodeBody)
+		require.Equal(t, localBody, nodeBody, tc.path)
+	}
+	require.Empty(t, e.settler.records(), "token counting is not billed")
+
+	empty := startStandardE2E(t, func(string) []service.Account { return nil })
+	empty.world.keys.keys["sk-a"].Group.AllowMessagesDispatch = true
+	emptyLocal := startLocalOpenAI(t, empty, nil, routes)
+	for _, tc := range []struct{ path, body string }{
+		{"/v1/messages/count_tokens", `{"model":"gpt-5","messages":[{"role":"user","content":"hi"}]}`},
+		{"/v1/responses/input_tokens", `{"model":"gpt-5","input":"hi"}`},
+	} {
+		nodeStatus, nodeBody := empty.post(t, tc.path, "sk-a", tc.body)
+		empty.world.waitReleased(t)
+		localStatus, localBody := emptyLocal.post(t, tc.path, "sk-a", tc.body)
+		require.Equal(t, localStatus, nodeStatus)
+		require.Equal(t, localBody, nodeBody, tc.path)
+	}
+}

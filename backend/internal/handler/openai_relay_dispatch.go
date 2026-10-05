@@ -124,6 +124,10 @@ type OpenAIRelaySelectRequest struct {
 	// Images：OpenAI 分组的同步图片入口；ImagesCapability 是请求需要的图片能力，Model 是选号用的路由模型。
 	Images           bool
 	ImagesCapability string
+
+	// InputTokens、OpenAICountTokens：OpenAI 分组的 /v1/responses/input_tokens 和 /v1/messages/count_tokens（不占槽、不计费）。
+	InputTokens       bool
+	OpenAICountTokens bool
 }
 
 // OpenAIRelaySelectResult 是一次远程选号的结果：Attempt 与 Rejection 二选一。

@@ -73,7 +73,10 @@ func (h *OpenAIGatewayHandler) ResponsesInputTokens(c *gin.Context) {
 	}
 
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
-	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+	// 从节点：计费资格、渠道映射、选号在主节点（不占槽、不计费），请求结束时放掉这次的选号。
+	if h.relay != nil {
+		defer h.relay.RequestDone(c)
+	} else if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
 		reqLog.Info("openai_input_tokens.billing_eligibility_check_failed", zap.Error(err))
 		status, code, message, retryAfter := billingErrorDetails(err)
 		if retryAfter > 0 {
@@ -83,27 +86,44 @@ func (h *OpenAIGatewayHandler) ResponsesInputTokens(c *gin.Context) {
 		return
 	}
 
-	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
-	routingModel := reqModel
-	forwardBody := body
-	if channelMapping.Mapped {
-		routingModel = channelMapping.MappedModel
-		forwardBody = h.gatewayService.ReplaceModelInBody(body, routingModel)
+	var channelMapping service.ChannelMappingResult
+	if h.relay == nil {
+		channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
 	}
+	routingModel := reqModel
 
 	// Token counting is not billed, so it must not be excluded by the profit gate.
 	c.Request = c.Request.WithContext(service.WithOpenAIProfitControlSuppressed(c.Request.Context()))
 	requestPlatform := openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
 	sessionHash := h.gatewayService.GenerateSessionHash(c, body)
 	requestStart := time.Now()
-	account, err := h.gatewayService.SelectAccountForTokenCount(
-		c.Request.Context(),
-		apiKey.GroupID,
-		sessionHash,
-		routingModel,
-		service.OpenAIEndpointCapabilityChatCompletions,
-		requestPlatform,
-	)
+	var account *service.Account
+	if h.relay != nil {
+		res := h.relay.Select(c, OpenAIRelaySelectRequest{InputTokens: true, APIKey: apiKey, Model: reqModel, SessionHash: sessionHash, Body: body})
+		if res.Rejection != nil {
+			h.writeOpenAIRelayRejection(c, res.Rejection, apiKey, reqModel, cyberBlockFormatResponses, nil, false, reqLog)
+			return
+		}
+		channelMapping = res.Attempt.ChannelMapping
+		account = res.Attempt.Account
+		routingModel = res.Attempt.ForwardModel
+	} else {
+		if channelMapping.Mapped {
+			routingModel = channelMapping.MappedModel
+		}
+		account, err = h.gatewayService.SelectAccountForTokenCount(
+			c.Request.Context(),
+			apiKey.GroupID,
+			sessionHash,
+			routingModel,
+			service.OpenAIEndpointCapabilityChatCompletions,
+			requestPlatform,
+		)
+	}
+	forwardBody := body
+	if channelMapping.Mapped {
+		forwardBody = h.gatewayService.ReplaceModelInBody(body, routingModel)
+	}
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
 	if err != nil {
 		reqLog.Warn("openai_input_tokens.account_select_failed", zap.Error(openAICompatibleSelectionErrorForLog(err, requestPlatform)))
@@ -245,11 +265,19 @@ func (h *OpenAIGatewayHandler) CountTokens(c *gin.Context) {
 	setOpsRequestContext(c, reqModel, false)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(false, false)))
 
-	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
+	// 从节点：渠道映射、计费资格、选号在主节点（不占槽、不计费），请求结束时放掉这次的选号。
+	var channelMapping service.ChannelMappingResult
+	if h.relay == nil {
+		channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
+	} else {
+		defer h.relay.RequestDone(c)
+	}
 	mappedBodyForMessages := newOpenAIModelMappedBodyCache(body, h.gatewayService.ReplaceModelInBody)
 
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
-	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+	if h.relay != nil {
+		// 计费资格在主节点选号时做。
+	} else if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
 		reqLog.Info("openai_count_tokens.billing_eligibility_check_failed", zap.Error(err))
 		status, code, message, retryAfter := billingErrorDetails(err)
 		if retryAfter > 0 {
@@ -268,14 +296,25 @@ func (h *OpenAIGatewayHandler) CountTokens(c *gin.Context) {
 	if preferredMappedModel != "" {
 		currentRoutingModel = preferredMappedModel
 	}
-	account, err := h.gatewayService.SelectAccountForTokenCount(
-		c.Request.Context(),
-		apiKey.GroupID,
-		sessionHash,
-		currentRoutingModel,
-		service.OpenAIEndpointCapabilityChatCompletions,
-		openAICompatibleRequestPlatform(c.Request.Context(), apiKey),
-	)
+	var account *service.Account
+	if h.relay != nil {
+		res := h.relay.Select(c, OpenAIRelaySelectRequest{OpenAICountTokens: true, APIKey: apiKey, Model: reqModel, SessionHash: sessionHash, Body: body})
+		if res.Rejection != nil {
+			h.writeOpenAIRelayRejection(c, res.Rejection, apiKey, reqModel, cyberBlockFormatAnthropic, nil, false, reqLog)
+			return
+		}
+		channelMapping = res.Attempt.ChannelMapping
+		account = res.Attempt.Account
+	} else {
+		account, err = h.gatewayService.SelectAccountForTokenCount(
+			c.Request.Context(),
+			apiKey.GroupID,
+			sessionHash,
+			currentRoutingModel,
+			service.OpenAIEndpointCapabilityChatCompletions,
+			openAICompatibleRequestPlatform(c.Request.Context(), apiKey),
+		)
+	}
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
 	if err != nil {
 		requestPlatform := openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
