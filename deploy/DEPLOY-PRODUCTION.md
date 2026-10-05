@@ -509,6 +509,33 @@ ssh -i "$PRODKEY" ec2-user@$PRODIP \
 > `/api/v1/settings/public` 立刻是新值，但 `/download` 等页面仍是旧值，直到容器重启或后台设置页再保存一次。
 > 客户端发版改下载地址/版本号时，要么在后台设置页改，要么改完数据库后重启 sub2api。
 
+### B4.3 2026-10-05 发版：Key 删除漏计费修复 + 充值有效期 + 客户端 1.0
+
+二进制 `sub2api-20261005-keydelete-billing-expiry-r1`（`local/main` `b27aad830`），上一版
+`sub2api-20260928-paw-ops-user-r2`，回滚改回它即可。SHA256：
+
+```text
+9c3126b63a172b1e2ad71285749c35184ececf75256160ab28c680a71c155c31
+```
+
+发版前备份：`/opt/sub2api/backups/pre-deploy-20261005-keydelete-billing-expiry.dump`。本次带上线的内容：
+
+- **修复漏计费**：请求在途期间删除 API Key，扣费事务不再回滚（`f7b7835db`，事故见下）。
+- 充值余额有效期（迁移 `259_balance_expiry_lots.sql`，后台「订单管理」顶部开关，**默认关闭**，见 `docs/BALANCE_EXPIRY.md`）。
+- 合入 Nirvana main：客户端 1.0 的 `client-version.json`、网关请求体哈希性能优化。
+
+验证：`sub2api=healthy`、`/health=200`、`/api/v1/tickets=401`、`/download=200`、
+`/api/v1/payment/balance-expiry` 与 `/api/v1/admin/payment/balance-expiry` 未带凭据均 401，
+迁移最新为 259，`balance_expiry_enabled=false`。
+
+> **事故（2026-10-05）**：用户 151 用脚本「建 Key（额度 100）→ 发请求 → 约 2 秒后删 Key」，请求结束异步记账时
+> Key 已软删除，Key 额度更新 SQL 带 `deleted_at IS NULL`，0 行返回 `API_KEY_NOT_FOUND`，同事务的余额扣费一并回滚，
+> 日志是 `record_usage_failed … API_KEY_NOT_FOUND`，用量日志 `actual_cost=0` 且没有 `usage_billing_dedup` 记录。
+> 修复前 7 笔共少收约 $0.025。真库回归：`internal/repository/usage_billing_deleted_key_pg_test.go`（`-tags pgtest`）。
+>
+> **遗留**：macOS 1.0 安装包尚未上传（`codex-relay-client_v1.0_macos-arm64.tar.gz` 返回 404），而
+> `client-version.json` 已是 1.0，下载页 macOS 链接仍是 0.9。
+
 ## B5. 回滚
 
 bind mount 模式：把 compose 里挂载的文件名改回上一个二进制，重跑 B3 最后那条命令即可。
