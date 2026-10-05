@@ -53,7 +53,7 @@ func (s *OpenAIGatewayService) CPASchedulingProfile(ctx context.Context) (*CPASc
 			SubscriptionPriorityEnabled:    settings.enabled && settings.subscriptionPriorityEnabled,
 			PriorityOrder:                  "ascending",
 			LowUpstreamRatePriorityEnabled: settings.lowUpstreamRatePriorityEnabled,
-			OAuthSchedulingRateMultiplier:  settings.oauthSchedulingRateMultiplier,
+			OAuthSchedulingRateMultiplier:  cpaOAuthSchedulingRateMultiplier(settings.oauthSchedulingRateMultiplier),
 			Sticky: CPAStickyPolicy{
 				SessionTTLSeconds:    int64(s.openAIWSSessionStickyTTL() / time.Second),
 				ResponseIDTTLSeconds: int(s.openAIWSResponseStickyTTL() / time.Second),
@@ -154,7 +154,17 @@ func (s *OpenAIGatewayService) cpaRetryPolicy() CPARetryPolicy {
 	return policy
 }
 
-func cpaAccountScheduling(account *Account, now time.Time, oauthRate float64) CPAAccountScheduling {
+// cpaOAuthSchedulingRateMultiplier 把「未设置（nil）」折算成 CPA 协议里的数值：
+// CPA 侧只认 float64，未设置时沿用历史默认倍率；每个账号的实际成本倍率
+// 仍由 openAISchedulingRate 逐账号算好随 profile 下发。
+func cpaOAuthSchedulingRateMultiplier(rate *float64) float64 {
+	if rate == nil {
+		return defaultOpenAIOAuthSchedulingRateMultiplier
+	}
+	return *rate
+}
+
+func cpaAccountScheduling(account *Account, now time.Time, oauthRate *float64) CPAAccountScheduling {
 	identity := CPAAccountIdentity{
 		ChatGPTAccountID: account.GetChatGPTAccountID(), ChatGPTUserID: account.GetChatGPTUserID(),
 		WorkspaceID:       firstStringValue(account.Credentials, "workspace_id", "chatgpt_workspace_id"),

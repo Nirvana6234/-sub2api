@@ -28,7 +28,7 @@ func TestSensitiveDataRoutesRejectUnauthenticatedRequests(t *testing.T) {
 	v1 := router.Group("/api/v1")
 	RegisterUserRoutes(v1, handlers, jwtAuth, audit, nil, nil)
 	RegisterAdminRoutes(v1, handlers, adminAuth, audit, stepUp, nil, nil)
-	RegisterPaymentRoutes(v1, nil, nil, nil, jwtAuth, adminAuth, audit, nil, nil)
+	RegisterPaymentRoutes(v1, nil, nil, nil, jwtAuth, adminAuth, audit, nil, nil, nil)
 
 	for _, path := range []string{
 		"/api/v1/user/profile",

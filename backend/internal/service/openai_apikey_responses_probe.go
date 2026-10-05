@@ -77,7 +77,8 @@ func openaiResponsesProbePayload(modelID string) []byte {
 //
 // 工具能力探测必须用上游真实存在的模型——用占位模型(DefaultTestModel)打第三方
 // 上游只会拿到 400 model-not-found,无从判定工具能力。优先取账号 model_mapping
-// 的上游模型(值),按字典序取首个具体(非通配符)模型以保证可复现;无映射时回退
+// 的上游模型(值),其中优先通用 GPT 文本模型,同类按字典序取首个具体(非通配符)
+// 模型以保证可复现;无映射时回退
 // DefaultTestModel(适配 OpenAI 官方 APIKey 账号)。
 func selectResponsesProbeModel(account *Account) string {
 	return selectResponsesProbeModels(account)[0]
@@ -85,6 +86,13 @@ func selectResponsesProbeModel(account *Account) string {
 
 // openaiResponsesProbeMaxModels 限制一次探测最多尝试的模型数。
 const openaiResponsesProbeMaxModels = 3
+
+func responsesProbeModelRank(model string) int {
+	if strings.HasPrefix(model, "gpt-") && !isOpenAIImageGenerationModel(model) {
+		return 0
+	}
+	return 1
+}
 
 // selectResponsesProbeModels 按 selectResponsesProbeModel 的顺序返回去重后的
 // 候选模型（至多 openaiResponsesProbeMaxModels 个，恒非空）。映射里的某个模型
@@ -109,6 +117,10 @@ func selectResponsesProbeModels(account *Account) []string {
 		return []string{openai.DefaultTestModel}
 	}
 	sort.Strings(candidates)
+	// 通用 GPT 文本模型优先于 codex-auto-review、纯图像模型等辅助条目——后者证明不了工具能力。
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return responsesProbeModelRank(candidates[i]) < responsesProbeModelRank(candidates[j])
+	})
 	if len(candidates) > openaiResponsesProbeMaxModels {
 		candidates = candidates[:openaiResponsesProbeMaxModels]
 	}
@@ -195,7 +207,7 @@ func (s *AccountTestService) ProbeOpenAIAPIKeyResponsesSupport(ctx context.Conte
 		if !ok {
 			return
 		}
-		if !isUpstreamModelNotFoundError(status, bodyBytes) {
+		if !isUpstreamModelNotFoundError(status, bodyBytes) && !isResponsesProbeModelUnavailable(status, bodyBytes) {
 			break
 		}
 		logger.LegacyPrintf("service.openai_probe", "probe_model_not_found: account_id=%d probe_model=%s", accountID, probeModel)
@@ -301,9 +313,13 @@ func (s *AccountTestService) doResponsesProbeAttempt(ctx context.Context, accoun
 // 其余 2xx 一律可下结论——尤其 status=completed 却只回 reasoning 的上游（火山方舟
 // coding/v3 × kimi-k2.6），仍按原逻辑判为不支持。
 //
-// 非 2xx 的结论只看状态码、不依赖响应内容，恒可下结论。
+// 明确指向探测模型不可用的 400/404(model_not_found 等)只说明模型不存在,不说明端点
+// 能力,不下结论;其余非 2xx 的结论只看状态码、不依赖响应内容，恒可下结论。
 // 缺少 status 字段的响应体（含非 JSON）也按可下结论处理，保持既有行为。
 func responsesProbeVerdictIsConclusive(status int, body []byte) bool {
+	if isResponsesProbeModelUnavailable(status, body) {
+		return false
+	}
 	if status < 200 || status >= 300 {
 		return true
 	}
@@ -344,6 +360,7 @@ func isResponsesEndpointSupportedByStatus(status int, body []byte) bool {
 // 携带工具的请求。
 //
 //   - 404 / 405：端点不存在 → false
+//   - 探测模型不可用的 400/404（说明与端点无关）→ true（调用方同时换下一个候选模型）
 //   - 404 且响应体是 model-not-found：端点在，只是上游没有探测所用的模型
 //     （上游是另一台 sub2api 时，分组里没有该模型就回 404 model_not_found）→
 //     同下一条，按端点存在处理
@@ -353,8 +370,8 @@ func isResponsesEndpointSupportedByStatus(status int, body []byte) bool {
 //     输出项才算真正可用;否则(如火山方舟 coding/v3 × kimi-k2.6 仅回 reasoning)
 //     判为 false,使网关改走 /v1/chat/completions 直转路径。
 func decideResponsesProbeSupport(status int, body []byte) bool {
-	if isUpstreamModelNotFoundError(status, body) {
-		return true
+	if isUpstreamModelNotFoundError(status, body) || isResponsesProbeModelUnavailable(status, body) {
+		return true // 模型层面的错误不说明端点不存在。
 	}
 	if status == http.StatusNotFound || status == http.StatusMethodNotAllowed {
 		return false
@@ -363,6 +380,21 @@ func decideResponsesProbeSupport(status int, body []byte) bool {
 		return true
 	}
 	return responsesProbeBodyHasFunctionCall(body)
+}
+
+// isResponsesProbeModelUnavailable 判断 400/404 是否只是在说探测模型不可用
+// (错误码/类型为 model_not_found 等,或错误文案明确说模型不存在/不可用)。
+func isResponsesProbeModelUnavailable(status int, body []byte) bool {
+	if status != http.StatusBadRequest && status != http.StatusNotFound {
+		return false
+	}
+	for _, path := range []string{"error.code", "error.type", "response.error.code", "response.error.type"} {
+		switch strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, path).String())) {
+		case "model_not_found", "model_not_available", "unsupported_model", "invalid_model":
+			return true
+		}
+	}
+	return isExplicitOpenAIModelAvailabilityMessage(extractUpstreamErrorMessage(body))
 }
 
 // responsesProbeBodyHasFunctionCall 判断非流式 Responses 响应体的 output 数组里

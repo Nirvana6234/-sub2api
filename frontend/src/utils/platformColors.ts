@@ -253,6 +253,7 @@ function isPlatform(p: string): p is Platform {
     p === 'deepseek' ||
     p === 'minimax' ||
     p === 'opencode_go' ||
+    p === 'typesafe' ||
     p === 'composite'
   )
 }
@@ -321,6 +322,7 @@ export function platformLabel(p: string): string {
     case 'deepseek': return 'DeepSeek'
     case 'minimax': return 'MiniMax'
     case 'opencode_go': return 'OpenCode'
+    case 'typesafe': return 'TypeSafe / Jev'
     case 'composite': return 'Composite'
     default: return p || 'API'
   }

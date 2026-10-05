@@ -171,14 +171,14 @@ func TestCPASchedulingHonorsDisabledOverrideGateAndAccountErrors(t *testing.T) {
 
 func TestCPASchedulingDefaultRetryCodesAndIdentitySafety(t *testing.T) {
 	a := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"chatgpt_account_id": "stable"}}
-	profile := cpaAccountScheduling(a, time.Now(), 1)
+	profile := cpaAccountScheduling(a, time.Now(), floatPtr(1))
 	require.True(t, profile.OAuthIdentityMatchable)
 	require.Equal(t, []int{401, 403, 429}, profile.PoolModeRetryStatusCodes)
 	a.Type = AccountTypeAPIKey
-	profile = cpaAccountScheduling(a, time.Now(), 1)
+	profile = cpaAccountScheduling(a, time.Now(), floatPtr(1))
 	require.False(t, profile.OAuthIdentityMatchable)
 	a.Type = AccountTypeOAuth
 	delete(a.Credentials, "chatgpt_account_id")
-	profile = cpaAccountScheduling(a, time.Now(), 1)
+	profile = cpaAccountScheduling(a, time.Now(), floatPtr(1))
 	require.False(t, profile.OAuthIdentityMatchable)
 }
