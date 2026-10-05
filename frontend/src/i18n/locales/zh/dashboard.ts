@@ -76,6 +76,7 @@ export default {
         windows: 'Windows 64 位',
         mac: 'macOS · Apple 芯片',
         meta: '最新版 v{version}',
+        metaPlatforms: '最新版 Windows v{windows} · macOS v{mac}',
         guide: '安装教程',
         action: '下载',
         remote: {

@@ -76,6 +76,7 @@ export default {
         windows: 'Windows x64',
         mac: 'macOS · Apple silicon',
         meta: 'Latest v{version}',
+        metaPlatforms: 'Latest Windows v{windows} · macOS v{mac}',
         guide: 'Install guide',
         action: 'Download',
         remote: {

@@ -121,6 +121,9 @@
             <template v-else-if="card.id === 'api'">
               {{ t('dashboard.serviceEntry.api.meta', { total: stats?.total_api_keys ?? 0, active: stats?.active_api_keys ?? 0 }) }}
             </template>
+            <template v-else-if="clientVersionsDiffer">
+              {{ t('dashboard.serviceEntry.client.metaPlatforms', { windows: clientVersion, mac: clientVersionMac }) }}
+            </template>
             <template v-else-if="clientVersion">{{ t('dashboard.serviceEntry.client.meta', { version: clientVersion }) }}</template>
           </p>
           <div class="ml-auto flex items-center gap-1.5">
@@ -230,5 +233,11 @@ function connectRemote() {
 }
 
 const clientVersion = computed(() => (appStore.cachedPublicSettings?.client_latest_version || '').trim())
+const clientVersionMac = computed(() => (appStore.cachedPublicSettings?.client_latest_version_mac || '').trim())
+// Windows 与 macOS 的发布节奏不同（macOS 包要在 Mac 上单独构建），两边版本不一致时分别显示，
+// 避免卡片写着「最新版 v1.0」、Mac 用户点下载却拿到 0.9。
+const clientVersionsDiffer = computed(
+  () => !!clientVersion.value && !!clientVersionMac.value && clientVersion.value !== clientVersionMac.value
+)
 const docUrl = computed(() => sanitizeUrl(appStore.cachedPublicSettings?.doc_url || appStore.docUrl || ''))
 </script>
