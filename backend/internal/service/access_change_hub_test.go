@@ -94,3 +94,17 @@ func TestPlatformQuotaWritesPublishAChange(t *testing.T) {
 
 	require.Same(t, inner, NewObservedUserPlatformQuotaRepository(inner, nil), "no hub, no wrapper")
 }
+
+// Key 被删除、停用、额度用尽时发布改动（主从分流收回它在从节点上的额度）；没挂中心和无效 ID 不发。
+func TestAPIKeyAccessChangeIsPublished(t *testing.T) {
+	svc := NewAPIKeyService(&authRepoStub{}, nil, nil, nil, nil, nil, &config.Config{})
+	svc.publishAPIKeyAccessChange(5) // 没挂中心时照常工作
+	hub := NewAccessChangeHub()
+	var rec recordedChanges
+	hub.Subscribe(rec.add)
+	AttachAccessChangeHub(hub, svc, nil)
+
+	svc.publishAPIKeyAccessChange(5)
+	svc.publishAPIKeyAccessChange(0)
+	require.Equal(t, []AccessChange{{Kind: AccessChangeAPIKey, KeyID: 5}}, rec.got)
+}

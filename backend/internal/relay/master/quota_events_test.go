@@ -156,3 +156,29 @@ func TestBalanceReclaimerWaitsForOnlineNodes(t *testing.T) {
 	require.Equal(t, now.Add(QuotaLeaseTTL).UnixMilli(), releaseBy.UnixMilli())
 	require.Equal(t, ToMicros(5), store.ReservedBalance(1))
 }
+
+// Key 被删除、停用、额度用尽：只收回这个 Key 维度的额度（各窗口），别的 Key 和用户的其余额度不动。
+func TestAPIKeyChangeRecallsOnlyThatKeysLeases(t *testing.T) {
+	q, _, _ := newProtoQuotas(t)
+	events := NewEventHub()
+	e := newQuotaEvents(q, NewEventRecaller(q, events))
+	ctx := context.Background()
+	online := fakeRecallSession(events, 10)
+	keyA5h := LeaseScope{Dimension: service.QuotaDimAPIKey5h, ScopeID: 77}
+	keyATotal := LeaseScope{Dimension: service.QuotaDimAPIKeyTotal, ScopeID: 77}
+	keyB := LeaseScope{Dimension: service.QuotaDimAPIKey5h, ScopeID: 78}
+	grantScope(t, q, 1, 10, keyA5h)
+	grantScope(t, q, 1, 10, keyATotal)
+	grantScope(t, q, 1, 10, keyB)
+	grantScope(t, q, 1, 10, protoBalance)
+
+	e.OnAccessChange(service.AccessChange{Kind: service.AccessChangeAPIKey, KeyID: 77})
+	for len(e.queue) > 0 {
+		(<-e.queue)(ctx)
+	}
+	got := drainRecalls(online)
+	require.Len(t, got, 2)
+	for _, rc := range got {
+		require.Equal(t, int64(77), rc.GetScope().GetScopeId())
+	}
+}

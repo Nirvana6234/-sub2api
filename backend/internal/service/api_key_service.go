@@ -2744,6 +2744,9 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 	}
 
 	s.InvalidateAuthCacheByKey(ctx, apiKey.Key)
+	if fields.Status && apiKey.Status != StatusActive {
+		s.publishAPIKeyAccessChange(apiKey.ID)
+	}
 	if fields.AutoGroup || fields.AutoGroupStrategy || fields.AutoGroupIDs || fields.GroupID {
 		s.InvalidateAutoGroupSelectionsByUserID(ctx, apiKey.UserID)
 	}
@@ -2779,6 +2782,7 @@ func (s *APIKeyService) Delete(ctx context.Context, id int64, userID int64) erro
 		_ = s.cache.DeleteCreateAttemptCount(ctx, userID)
 	}
 	s.InvalidateAuthCacheByKey(ctx, key)
+	s.publishAPIKeyAccessChange(id)
 	s.InvalidateAutoGroupSelectionsByUserID(ctx, userID)
 	s.lastUsedTouchL1.Delete(id)
 
@@ -3167,6 +3171,7 @@ func (s *APIKeyService) UpdateQuotaUsed(ctx context.Context, apiKeyID int64, cos
 		}
 		if state != nil && state.Status == StatusAPIKeyQuotaExhausted && strings.TrimSpace(state.Key) != "" {
 			s.InvalidateAuthCacheByKey(ctx, state.Key)
+			s.publishAPIKeyAccessChange(apiKeyID)
 		}
 		return nil
 	}
@@ -3193,6 +3198,7 @@ func (s *APIKeyService) UpdateQuotaUsed(ctx context.Context, apiKeyID int64, cos
 		}
 		// Invalidate cache so next request sees the new status
 		s.InvalidateAuthCacheByKey(ctx, apiKey.Key)
+		s.publishAPIKeyAccessChange(apiKey.ID)
 	}
 
 	return nil

@@ -22,6 +22,14 @@ func (s *APIKeyService) InvalidateAuthCacheByKey(ctx context.Context, key string
 	s.deleteAuthCache(ctx, cacheKey)
 }
 
+// publishAPIKeyAccessChange 通知这个 Key 被删除、停用或额度用尽（主从分流收回它在从节点上的额度）。nil hub 安全。
+func (s *APIKeyService) publishAPIKeyAccessChange(keyID int64) {
+	if keyID <= 0 {
+		return
+	}
+	s.accessChanges.Load().Publish(AccessChange{Kind: AccessChangeAPIKey, KeyID: keyID})
+}
+
 // InvalidateAuthCacheByUserID 清除用户相关的 API Key 认证缓存
 func (s *APIKeyService) InvalidateAuthCacheByUserID(ctx context.Context, userID int64) {
 	if userID <= 0 {

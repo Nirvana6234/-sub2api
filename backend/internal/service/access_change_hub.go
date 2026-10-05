@@ -17,14 +17,17 @@ const (
 	AccessChangeSubscription AccessChangeKind = "subscription"
 	// AccessChangePlatformQuota：用户的平台日/周/月配额上限。
 	AccessChangePlatformQuota AccessChangeKind = "platform_quota"
+	// AccessChangeAPIKey：API Key 被删除、停用或额度用尽（这个 Key 维度的额度要收回）。
+	AccessChangeAPIKey AccessChangeKind = "api_key"
 )
 
 // AccessChange 是一条改动。UserID / GroupID 按 Kind 填写：
-// user 只有 UserID；group 只有 GroupID；subscription 两个都有；platform_quota 只有 UserID。
+// user 只有 UserID；group 只有 GroupID；subscription 两个都有；platform_quota 只有 UserID；api_key 只有 KeyID。
 type AccessChange struct {
 	Kind    AccessChangeKind
 	UserID  int64
 	GroupID int64
+	KeyID   int64
 }
 
 // AccessChangeHub 在用户、分组、订阅、平台配额改动后通知订阅者。

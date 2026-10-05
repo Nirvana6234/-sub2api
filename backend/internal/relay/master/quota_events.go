@@ -11,6 +11,11 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
+// apiKeyDimensions 是 Key 维度的额度（总额、5 小时、日、周窗口，归属 ID 是 API Key ID）。
+var apiKeyDimensions = []string{
+	service.QuotaDimAPIKeyTotal, service.QuotaDimAPIKey5h, service.QuotaDimAPIKey1d, service.QuotaDimAPIKey7d,
+}
+
 var subscriptionDimensions = []string{
 	service.QuotaDimSubscriptionDaily, service.QuotaDimSubscriptionWeekly, service.QuotaDimSubscriptionMonthly,
 }
@@ -52,7 +57,9 @@ const quotaEventQueueSize = 1024
 //   - 用户被停用、删除：收回这个用户的全部额度（由票据吊销器查到状态后通知）。
 //
 // 修改倍率、价格不收回（额度与倍率无关）；用量窗口重置不处理；充值、兑换等普通用户改动不收回。
-// Key 删除、停用的收回随 WP11（需要 Key ID）；改密码没有事件，租约闲置 5 分钟后被收回。
+//   - Key 被删除、停用、额度用尽：收回这个 Key 维度的额度。
+//
+// 改密码没有事件，租约闲置 5 分钟后被收回。
 type quotaEvents struct {
 	quotas   *Quotas
 	recaller *EventRecaller
@@ -81,6 +88,10 @@ func (e *quotaEvents) OnAccessChange(c service.AccessChange) {
 	case service.AccessChangeGroup:
 		e.enqueue("group", func(ctx context.Context) {
 			e.recallScope(ctx, subscriptionDimensions, c.GroupID, 0)
+		})
+	case service.AccessChangeAPIKey:
+		e.enqueue("api_key", func(ctx context.Context) {
+			e.recallScope(ctx, apiKeyDimensions, c.KeyID, 0)
 		})
 	case service.AccessChangePlatformQuota:
 		e.enqueue("platform_quota", func(ctx context.Context) {
