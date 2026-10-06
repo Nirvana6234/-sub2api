@@ -1,4 +1,4 @@
-# 主从节点架构设计（v0.26，2026-10-06）
+# 主从节点架构设计（v0.27，2026-10-06）
 
 > 状态：开发中（分支 `feat/master-relay-nodes`，进度见开发计划）。本文只记录当前结论；历史版本不再保留在正文里。开发计划见 `docs/MASTER_RELAY_NODES_PLAN.md`。
 > 代码引用按 2026-09-25 的 main（`c652d850`）核对；行号会漂移，引用处同时写了函数名，以函数名为准。
@@ -690,6 +690,15 @@ API Key 用户直接访问从节点，由从节点向主节点认证（8.2）。
 - **恢复**：有从节点重新可用后，小白端下次定期询问时分回从节点；管理员把手动改到主节点的从节点域名改回（10.3），API Key 用户不用操作。
 
 **实现状态（v0.25，WP11）**：主节点分配比例为 0 时的闸门是一个挂在整个 HTTP 引擎上的中间件（`middleware.RelayMasterGateMiddleware`），只在主从分流在运行且比例为 0 时生效，只对 API Key 的**转发路由**生效——按路由模板（`c.FullPath()`）和一张**正面清单**判断（`IsRelayForwardingRoute`：messages、responses、chat/completions、图片生成与编辑、视频、语音、embeddings、alpha search、systemone、web/x search、Seedance 任务、live、Gemini 原生的 `POST /models/*`，各前缀和根路径别名），模型列表、用量、余额、批量图片、图片任务查询、分配查询等不是转发的接口（8.4）和网页、后台都不在清单里，不认识的路由一律放行。被拒时回 403（`master_relay_disabled`，OpenAI / Anthropic / Google 格式），提示这把 Key 分配的地址。**从节点交给主节点转发的请求要放行**，所以交过来的请求带从节点自己签的标记 `X-Sub2api-Relay-Handoff`：主节点进程内随机生成一把密钥，经加密下发的配置分段（`handoff`）给各从节点；标记 = HMAC(密钥, 节点 ID、时间、方法、路径)，5 分钟有效；主节点验签并确认签发的节点还在服务（激活或排空）才放行；从节点转交时先去掉客户端自己带的同名头，再带自己的。主节点重启换新密钥，节点随配置版本重新拉取。（`TestIsRelayForwardingRoute`、`TestRelayMasterGateBlocksDirectForwardingAtRatioZero`、`TestRuntimeGateBlocksMasterForwardingAtRatioZero`、`TestHandOffCarriesTheNodesOwnMarker`）
+
+**实现状态（v0.27，WP12）**：
+- **用户分配**（`master/user_assign.go`、`user_assign_store.go`，表 `relay_user_assignments`）：新用户先按主节点分配比例掷骰子（主节点负载也受阈值约束），其余按**剩余容量加权随机**——权重 = 带宽上限 × (1 − 负载)，至少留 2%；负载是心跳的近 1 分钟速率比，再加上最近 10 秒刚分到这台的人数 × 1%；超过 85% 的不再分。已分配的保持不动，直到：原节点不可用（离线、排空、停用、被客户端报告暂停、疑似少报）、客户端 POST 报告连不上它、比例改成 0（分到主节点的移走）、管理员移动或重新平衡。从节点都不可用时：比例大于 0 临时分给主节点（原因 `fallback`，从节点恢复后下次询问分回去）；比例为 0 返回 `ErrRelayUnavailable`（接口回 503 `RELAY_UNAVAILABLE`）；"可用但压力都很高"仍分给从节点（挑负载最低的），不分给主节点。
+- **票据**：分到从节点时用 `Runtime.IssueTicket` 签发，`token_version` 取用户当前的 `service.ResolvedTokenVersion`（与登录态同一个值）；`refresh_after` 取通用配置（默认 60 秒）且不超过票据有效期的一半。
+- **接口** `GET/POST /api/v1/paw/relay/assignment`（登录态、`/paw` 组；只在主节点，不在从节点开放）：返回 `role`、`node_id`、`base_url`（主节点没配置 `api_base_url` 时用当前请求的主机）、`ticket`、`ticket_expires_at`、`refresh_after`；POST 带 `unreachable_node_id`；主从分流没开时 404 `RELAY_NOT_ENABLED`（客户端沿用现在的地址）。限流用 `/paw` 组已有的面板限流。
+- **客户端失败报告**（10.3 第 2 条）：同一台被 5 个不同用户在 2 分钟内报告连不上，暂停分配 5 分钟并发 `node_unreachable_reports`；暂停期间这台不接新用户。
+- **管理操作**：`GET /admin/relay/users/assignment`（各节点的用户数）、`POST /admin/relay/users/rebalance`（删掉没固定的分配，下次询问重新分）、`POST /admin/relay/users/:id/move`、`/pin`（必须设到期时间，最长 30 天；节点必须现在能接用户）、`/unpin`；固定的节点不可用时自动解除固定并发 `user_pin_released`。都记审计、要二次验证。
+- **主节点转发上限**（10.5）：通用配置 `master_max_concurrent`（同时转发的请求数）和 `master_max_bandwidth_mbps`（带宽，取主节点网卡近 1 分钟速率），0 为不限；全局中间件对"API Key 转发路由 + 小白端转发接口 + 网页聊天 + 游客试用"占名额，超限回 503 `server_busy`（OpenAI / Anthropic / Google 格式，`Retry-After: 5`），**从节点交来的请求同样计入**，手机同步会话和其他登录态接口不算；主节点负载 = 并发占比和带宽占比较大者，分配时用它判断主节点是否过载。
+- 测试：`TestAssignUser*`（比例、票据、加权、失败转移与 fallback、比例 0、客户端报告）、`TestPinMoveAndRebalanceUsers`、`TestMasterForwardingCap`、`TestPawRelayAssignmentEndpoint`。**没做**：分配结果的"从节点域名当前解析到主节点"相关处理（WP13）。
 
 ### 10.6 主节点不可用时
 

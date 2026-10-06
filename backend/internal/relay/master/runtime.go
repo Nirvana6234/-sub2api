@@ -70,6 +70,8 @@ type RuntimeDeps struct {
 	// ReservedSink：主从分流运行时把冻结额读取挂到余额预检上（service.BillingCacheService）。
 	ReservedSink ReservedBalanceSink
 	Notifier     Notifier
+	// UserAssignments 保存小白端用户的分配（relay_user_assignments）；nil 时用内存（测试）。
+	UserAssignments UserAssignmentStore
 	// Metrics 保存心跳的分钟汇总（relay_node_minute_metrics）；nil 时不落库。
 	Metrics MetricsSink
 	// NewSelector 创建选号实现（relayselect，WP7）；nil 时不提供选号（测试、还没接入的部署）。
@@ -110,6 +112,8 @@ type Runtime struct {
 
 	// addresses 是节点接入地址的短缓存（address.go）。
 	addresses addressCache
+	// host 是主节点自己的网卡速率和转发并发（主节点转发上限，设计 10.5）。
+	host hostLoad
 
 	// generalCache 是选号热路径上通用配置的短缓存。
 	generalCache struct {
@@ -143,6 +147,8 @@ type runningRelay struct {
 	heartbeats *Heartbeats
 	// logs 把后台的日志和记录查询转给从节点（设计第 12 节）。
 	logs *LogQuerier
+	// users 给小白端用户分配节点（设计 10.1）。
+	users *userAssigner
 	// handoffKey 是"交给主节点转发"的标记密钥（handoff.go）。
 	handoffKey []byte
 }
@@ -451,7 +457,7 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 	relayv1.RegisterRelayEnrollmentServer(server.GRPC(), NewEnrollment(nodes, server))
 	control := NewControl(publisher)
 	heartbeats := NewHeartbeats(HeartbeatsOptions{
-		Now: r.now, Notifier: r.deps.Notifier, Sink: r.deps.Metrics,
+		Now: func() time.Time { return r.now() }, Notifier: r.deps.Notifier, Sink: r.deps.Metrics,
 		OfflineAfter: func() time.Duration {
 			return time.Duration(r.cachedGeneralConfig(context.Background()).WithDefaults().OfflineAfterSeconds) * time.Second
 		},
@@ -516,7 +522,7 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 		// 新建的 Key 从此按分配规则定节点；开关关闭时摘下，Key 保持未分配。
 		running.keyAssigner = NewKeyAssigner(KeyAssignerDeps{
 			Nodes: r.deps.Store.List, Online: heartbeats.OnlineNodes, Config: r.cachedGeneralConfig,
-			Stats: r.deps.APIKeys.RelayKeyStats, Now: r.now, Load: heartbeats.Load,
+			Stats: r.deps.APIKeys.RelayKeyStats, Now: func() time.Time { return r.now() }, Load: heartbeats.Load,
 		})
 		r.deps.APIKeys.SetRelayKeyAssigner(running.keyAssigner)
 		unsubs = append(unsubs, func() { r.deps.APIKeys.SetRelayKeyAssigner(nil) })
@@ -525,6 +531,15 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 	r.invalidateAddresses()
 	service.SetRelayAddressResolver(r)
 	unsubs = append(unsubs, func() { service.SetRelayAddressResolver(nil) })
+	// 小白端用户分配（登录后和定期询问，设计 10.9）。
+	assignments := r.deps.UserAssignments
+	if assignments == nil {
+		assignments = NewMemoryUserAssignments()
+	}
+	running.users = newUserAssigner(r, assignments)
+	service.SetRelayUserAssigner(r)
+	unsubs = append(unsubs, func() { service.SetRelayUserAssigner(nil) })
+	running.goRun(func() { r.host.run(runCtx) })
 	// 主节点分配比例为 0 时主节点不转发 API Key 请求（设计 10.5）；从节点交来的请求带标记，照常处理。
 	middleware.SetRelayMasterGate(r)
 	unsubs = append(unsubs, func() { middleware.SetRelayMasterGate(nil) })

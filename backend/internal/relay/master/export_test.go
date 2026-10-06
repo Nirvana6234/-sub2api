@@ -13,3 +13,27 @@ func HandoffKey(r *Runtime) []byte {
 
 // SetRuntimeClock 让外部测试包控制运行时的时钟（根证书停用等待）。
 func SetRuntimeClock(r *Runtime, now func() time.Time) { r.now = now }
+
+// HeartbeatsOf 返回运行中的心跳跟踪（测试里模拟节点的心跳）。
+func HeartbeatsOf(r *Runtime) *Heartbeats {
+	rr, err := r.runningRelay()
+	if err != nil {
+		return nil
+	}
+	return rr.heartbeats
+}
+
+// SetUserAssignRand 换掉小白端分配用的随机数（测试里让掷骰子可预期）。
+func SetUserAssignRand(r *Runtime, rnd func() float64) {
+	if rr, err := r.runningRelay(); err == nil && rr.users != nil {
+		rr.users.rnd = rnd
+	}
+}
+
+// UserAssignmentStoreOf 返回运行中的分配存储。
+func UserAssignmentStoreOf(r *Runtime) UserAssignmentStore {
+	if rr, err := r.runningRelay(); err == nil && rr.users != nil {
+		return rr.users.store
+	}
+	return nil
+}

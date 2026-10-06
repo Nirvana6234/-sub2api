@@ -44,20 +44,20 @@ func CaptureResponse(method, path string, write func(c *gin.Context)) *CapturedR
 // RelayNodeNotAssignedRejection 是"这个 Key 不是分配给这台从节点"的拒绝（节点规则为"仅分配的从节点"，设计 10.2）：403，
 // 按入口写成 OpenAI / Anthropic / Google 的错误格式，提示改用分配的地址。
 func RelayNodeNotAssignedRejection(method, path, message string) *CapturedRejection {
-	return relayPermissionRejection(method, path, "api_key_node_mismatch", message)
+	return relayRejection(method, path, http.StatusForbidden, "api_key_node_mismatch", "permission_error", message)
 }
 
-// relayPermissionRejection 是主从分流的 403 拒绝：按入口写成 OpenAI / Anthropic / Google 的错误格式。
-func relayPermissionRejection(method, path, code, message string) *CapturedRejection {
+// relayRejection 是主从分流的拒绝（403 不是分配给这里的、503 服务繁忙）：按入口写成 OpenAI / Anthropic / Google 的错误格式。
+func relayRejection(method, path string, status int, code, errType, message string) *CapturedRejection {
 	return captureRejection(method, path, func(c *gin.Context) {
 		switch {
 		case IsGoogleRelayPath(path):
-			abortWithGoogleError(c, http.StatusForbidden, message)
+			abortWithGoogleError(c, status, message)
 		case strings.Contains(path, "/messages"):
-			AnthropicErrorWriter(c, http.StatusForbidden, message)
+			AnthropicErrorWriter(c, status, message)
 			c.Abort()
 		default:
-			c.JSON(http.StatusForbidden, gin.H{"error": gin.H{"message": message, "type": "permission_error", "code": code}})
+			c.JSON(status, gin.H{"error": gin.H{"message": message, "type": errType, "code": code}})
 			c.Abort()
 		}
 	})

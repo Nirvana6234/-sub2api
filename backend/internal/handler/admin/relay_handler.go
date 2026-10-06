@@ -146,10 +146,10 @@ func relayError(c *gin.Context, err error) {
 		}
 		err = infraerrors.Conflict("RELAY_KEY_NOT_DELIVERED", err.Error()).
 			WithMetadata(map[string]string{"node_ids": strings.Join(ids, ",")})
-	case errors.Is(err, master.ErrNodeNotFound), errors.Is(err, master.ErrKeyNotFound):
+	case errors.Is(err, master.ErrNodeNotFound), errors.Is(err, master.ErrKeyNotFound), errors.Is(err, master.ErrAssignmentNotFound):
 		err = infraerrors.NotFound("RELAY_NOT_FOUND", err.Error())
 	case errors.Is(err, master.ErrFingerprintMismatch), errors.Is(err, master.ErrDomainRequired),
-		errors.Is(err, master.ErrInvalidGeneralConfig), errors.Is(err, master.ErrUnknownKeyPurpose):
+		errors.Is(err, master.ErrInvalidGeneralConfig), errors.Is(err, master.ErrUnknownKeyPurpose), errors.Is(err, master.ErrInvalidPin):
 		err = infraerrors.BadRequest("RELAY_INVALID_REQUEST", err.Error())
 	case errors.Is(err, master.ErrRelayNotRunning), errors.Is(err, master.ErrKeyAssignmentUnavailable):
 		err = infraerrors.Conflict("RELAY_NOT_RUNNING", err.Error())
@@ -562,6 +562,101 @@ func (h *RelayHandler) queryLogs(c *gin.Context, ids []int64) {
 		return
 	}
 	response.Success(c, gin.H{"nodes": results, "records": master.MergeLogResults(results, int(q.Limit))})
+}
+
+// ---- 小白端用户的分配（设计 10.1、10.4、10.8）----
+
+// UserAssignmentSummary 返回各节点（0 为主节点）上分到的小白端用户数。
+// GET /api/v1/admin/relay/users/assignment
+func (h *RelayHandler) UserAssignmentSummary(c *gin.Context) {
+	counts, err := h.runtime.UserAssignmentSummary(c.Request.Context())
+	if err != nil {
+		relayError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"nodes": counts})
+}
+
+// RebalanceUsers 重新平衡：没固定的用户下一次询问时按当前比例和容量重新分配。
+// POST /api/v1/admin/relay/users/rebalance
+func (h *RelayHandler) RebalanceUsers(c *gin.Context) {
+	actor, ok := relayActor(c)
+	if !ok {
+		return
+	}
+	n, err := h.runtime.RebalanceUsers(c.Request.Context(), actor)
+	if err != nil {
+		relayError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"users": n})
+}
+
+// UserNodeRequest 是移动 / 固定用户的请求；固定必须带到期时间。
+type UserNodeRequest struct {
+	NodeID *int64     `json:"node_id" binding:"required,min=0"`
+	Until  *time.Time `json:"until"`
+}
+
+// MoveUser 把用户移到指定节点（0 为主节点），下一次询问时生效。
+// POST /api/v1/admin/relay/users/:id/move
+func (h *RelayHandler) MoveUser(c *gin.Context) {
+	h.userNodeOp(c, false)
+}
+
+// PinUser 把用户固定在指定节点，必须设到期时间（最长 30 天）。
+// POST /api/v1/admin/relay/users/:id/pin
+func (h *RelayHandler) PinUser(c *gin.Context) {
+	h.userNodeOp(c, true)
+}
+
+func (h *RelayHandler) userNodeOp(c *gin.Context, pin bool) {
+	userID, ok := relayUserID(c)
+	if !ok {
+		return
+	}
+	var req UserNodeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	actor, ok := relayActor(c)
+	if !ok {
+		return
+	}
+	var err error
+	if pin {
+		if req.Until == nil {
+			response.BadRequest(c, "A pin needs an expiry time (until)")
+			return
+		}
+		err = h.runtime.PinUser(c.Request.Context(), actor, userID, *req.NodeID, *req.Until)
+	} else {
+		err = h.runtime.MoveUser(c.Request.Context(), actor, userID, *req.NodeID)
+	}
+	if err != nil {
+		relayError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"user_id": userID, "node_id": *req.NodeID})
+}
+
+// UnpinUser 解除固定（保留当前分配）。
+// POST /api/v1/admin/relay/users/:id/unpin
+func (h *RelayHandler) UnpinUser(c *gin.Context) {
+	userID, ok := relayUserID(c)
+	if !ok {
+		return
+	}
+	actor, ok := relayActor(c)
+	if !ok {
+		return
+	}
+	if err := h.runtime.UnpinUser(c.Request.Context(), actor, userID); err != nil {
+		relayError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"user_id": userID})
 }
 
 // ReplaceNodeRequest：换机器时新节点的 ID 和它在本机打印的指纹。

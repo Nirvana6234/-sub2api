@@ -30,6 +30,7 @@ const (
 	IngressRejectAPIKeyAuthOverloaded   IngressRejectReason = "api_key_auth_overloaded"
 	IngressRejectModelNotAllowed        IngressRejectReason = "model_not_allowed"
 	IngressRejectMasterRelayDisabled    IngressRejectReason = "master_relay_disabled"
+	IngressRejectMasterBusy             IngressRejectReason = "master_busy"
 )
 
 const ingressRejectReasonContextKey = "ingress_reject_reason"

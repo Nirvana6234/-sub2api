@@ -66,16 +66,17 @@ func ProvideMasterRuntime(
 	// 用户、分组、订阅作废时发布改动（平台配额在仓储层已接好，见 repository/wire.go）。
 	service.AttachAccessChangeHub(accessChanges, apiKeys, billing)
 	rt := master.NewRuntime(master.RuntimeDeps{
-		Config:        cfg,
-		Store:         repository.NewRelayNodeRepository(db),
-		Settings:      settings,
-		Hub:           hub,
-		APIKeys:       apiKeys,
-		AccessChanges: accessChanges,
-		Users:         users,
-		Leases:        repository.NewRelayLeaseRepository(db),
-		Metrics:       repository.NewRelayMetricsRepository(db),
-		ReservedSink:  billing,
+		Config:          cfg,
+		Store:           repository.NewRelayNodeRepository(db),
+		Settings:        settings,
+		Hub:             hub,
+		APIKeys:         apiKeys,
+		AccessChanges:   accessChanges,
+		Users:           users,
+		Leases:          repository.NewRelayLeaseRepository(db),
+		Metrics:         repository.NewRelayMetricsRepository(db),
+		UserAssignments: repository.NewRelayUserAssignmentRepository(db),
+		ReservedSink:    billing,
 		NewSelector: relayselect.NewFactory(relayselect.Deps{
 			Config: cfg, APIKeys: apiKeys, Subscriptions: subscriptions, Settings: settingService,
 			Billing: billing, Gateway: gateway, AnthropicGateway: anthropicGateway, Concurrency: concurrency,

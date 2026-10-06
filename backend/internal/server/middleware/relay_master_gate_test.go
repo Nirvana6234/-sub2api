@@ -72,6 +72,7 @@ func TestIsRelayForwardingRoute(t *testing.T) {
 
 type gateStub struct {
 	block   bool
+	busy    bool
 	key     []byte
 	address string
 }
@@ -82,6 +83,12 @@ func (g gateStub) VerifyHandoff(header, method, path string) bool {
 	return err == nil
 }
 func (g gateStub) AssignedAddress(context.Context, string) string { return g.address }
+func (g gateStub) AcquireMasterSlot(context.Context) (func(), bool) {
+	if g.busy {
+		return nil, false
+	}
+	return func() {}, true
+}
 
 // 设计 10.5：主节点分配比例为 0 时，API Key 的转发请求打到主节点回 403（OpenAI / Anthropic / Google 格式）并提示分配的地址；
 // 从节点交来的请求（带标记）、不是转发的接口、没开分流时都照常。

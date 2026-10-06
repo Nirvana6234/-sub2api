@@ -979,6 +979,13 @@ func registerRelayRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth
 		relay.POST("/nodes/:id/move-keys", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.MoveNodeKeys)
 		relay.POST("/nodes/:id/replace", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.ReplaceNode)
 
+		// 小白端用户的分配（设计 10.4、10.8）
+		relay.GET("/users/assignment", h.Admin.Relay.UserAssignmentSummary)
+		relay.POST("/users/rebalance", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.RebalanceUsers)
+		relay.POST("/users/:id/move", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.MoveUser)
+		relay.POST("/users/:id/pin", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.PinUser)
+		relay.POST("/users/:id/unpin", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.UnpinUser)
+
 		relay.GET("/keys/:purpose", h.Admin.Relay.ListKeys)
 		relay.POST("/keys/:purpose/stage", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.StageKey)
 		relay.POST("/keys/:purpose/:version/activate", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.ActivateKey)

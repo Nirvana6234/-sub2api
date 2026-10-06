@@ -128,6 +128,10 @@ func RegisterPawRoutes(v1 *gin.RouterGroup, svc *service.PawConfigService, jwtAu
 		c.JSON(http.StatusOK, PawConfigResponse{Data: PawConfigData{Defaults: PawDefaults{GroupID: req.GroupID, ModelID: req.ModelID, Reasoning: req.Reasoning}}})
 	})
 
+	// 主从分流：分配查询（设计 10.9）；只在主节点，不经过从节点。
+	paw.GET("/relay/assignment", pawRelayAssignmentHandler(false))
+	paw.POST("/relay/assignment", pawRelayAssignmentHandler(true))
+
 	paw.GET("/auto-group", pawGetAutoGroupHandler(deps.APIKeyService))
 	paw.PUT("/auto-group", pawSaveAutoGroupHandler(deps.APIKeyService))
 

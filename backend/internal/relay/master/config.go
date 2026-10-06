@@ -88,6 +88,10 @@ type GeneralConfig struct {
 	LoadThresholdPercent int `json:"load_threshold_percent,omitempty"`
 	// AssignmentRefreshSeconds：小白端分配查询间隔（默认 60）。
 	AssignmentRefreshSeconds int `json:"assignment_refresh_seconds,omitempty"`
+	// MasterMaxConcurrent：主节点同时转发的请求数上限（0 = 不限，设计 10.5）；超过时回"服务繁忙"。
+	MasterMaxConcurrent int `json:"master_max_concurrent,omitempty"`
+	// MasterMaxBandwidthMbps：主节点转发的带宽上限（0 = 不限）；负载 = 近 1 分钟收发速率较大者 ÷ 它，和并发占比取较大者。
+	MasterMaxBandwidthMbps int `json:"master_max_bandwidth_mbps,omitempty"`
 }
 
 const (
@@ -132,6 +136,9 @@ func (g GeneralConfig) Validate() error {
 	}
 	if g.LoadThresholdPercent > 100 {
 		return fmt.Errorf("load_threshold_percent must be at most 100")
+	}
+	if g.MasterMaxConcurrent < 0 || g.MasterMaxBandwidthMbps < 0 {
+		return fmt.Errorf("master forwarding limits must not be negative")
 	}
 	return nil
 }

@@ -22,6 +22,8 @@ type RelayMasterGate interface {
 	VerifyHandoff(header, method, path string) bool
 	// AssignedAddress 返回这把 Key 分配的地址（提示用）；取不到时为空。
 	AssignedAddress(ctx context.Context, rawKey string) string
+	// AcquireMasterSlot 占主节点转发的一个并发名额（设计 10.5：主节点转发有上限）；ok 为 false 时回"服务繁忙"。
+	AcquireMasterSlot(ctx context.Context) (release func(), ok bool)
 }
 
 type relayMasterGateHolder struct{ g RelayMasterGate }
@@ -41,27 +43,63 @@ func SetRelayMasterGate(g RelayMasterGate) {
 func RelayMasterGateMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		h := activeRelayMasterGate.Load()
-		if h == nil || !IsRelayForwardingRoute(c.Request.Method, c.FullPath()) {
+		if h == nil {
+			c.Next()
+			return
+		}
+		fullPath := c.FullPath()
+		forwarding := IsRelayForwardingRoute(c.Request.Method, fullPath)
+		if !forwarding && !IsMasterCappedRoute(fullPath) {
 			c.Next()
 			return
 		}
 		ctx := c.Request.Context()
-		if !h.g.BlockMasterForwarding(ctx) {
-			c.Next()
-			return
-		}
+		handedOff := false
 		if marker := c.GetHeader(sign.HandoffHeader); marker != "" && h.g.VerifyHandoff(marker, c.Request.Method, c.Request.URL.Path) {
-			c.Next()
+			handedOff = true
+		}
+		// 主节点分配比例为 0：API Key 的转发请求不接（从节点交来的除外）。
+		if forwarding && !handedOff && h.g.BlockMasterForwarding(ctx) {
+			message := "This server does not forward API key requests; please use the address assigned to your API key"
+			if addr := h.g.AssignedAddress(ctx, peekAPIKeyCredential(c)); addr != "" {
+				message += ": " + addr
+			}
+			MarkIngressRejected(c, IngressRejectMasterRelayDisabled)
+			WriteCapturedRejection(c, relayRejection(c.Request.Method, c.Request.URL.Path, http.StatusForbidden, "master_relay_disabled", "permission_error", message))
+			c.Abort()
 			return
 		}
-		message := "This server does not forward API key requests; please use the address assigned to your API key"
-		if addr := h.g.AssignedAddress(ctx, peekAPIKeyCredential(c)); addr != "" {
-			message += ": " + addr
+		// 主节点转发有上限（设计 10.5）：超过并发或带宽上限回"服务繁忙"；网页聊天、游客试用和从节点交来的请求同样计入。
+		release, ok := h.g.AcquireMasterSlot(ctx)
+		if !ok {
+			c.Header("Retry-After", "5")
+			MarkIngressRejected(c, IngressRejectMasterBusy)
+			WriteCapturedRejection(c, relayRejection(c.Request.Method, c.Request.URL.Path, http.StatusServiceUnavailable, "server_busy", "api_error", "The server is busy, please retry shortly"))
+			c.Abort()
+			return
 		}
-		MarkIngressRejected(c, IngressRejectMasterRelayDisabled)
-		WriteCapturedRejection(c, relayPermissionRejection(c.Request.Method, c.Request.URL.Path, "master_relay_disabled", message))
-		c.Abort()
+		defer release()
+		c.Next()
 	}
+}
+
+// IsMasterCappedRoute 报告一条路由模板是不是计入主节点转发上限的非 API Key 转发入口：
+// 小白端转发接口（/api/v1/paw/ 下会选账号的）、网页聊天（playground）、游客试用——它们同样在转发上游流量（设计 10.5）。
+// 手机同步会话、登录态的其他接口不算（连接长、消息小，算进去超限时会把手机连接断掉）。
+func IsMasterCappedRoute(fullPath string) bool {
+	switch {
+	case strings.HasPrefix(fullPath, "/api/v1/paw/"):
+		rest := strings.TrimPrefix(fullPath, "/api/v1/paw/")
+		for _, seg := range []string{"responses", "messages", "chat/completions", "images/", "systemone"} {
+			if rest == strings.TrimSuffix(seg, "/") || strings.HasPrefix(rest, seg) {
+				return true
+			}
+		}
+		return false
+	case strings.HasPrefix(fullPath, "/api/v1/playground/"), strings.HasPrefix(fullPath, "/api/v1/trial/"):
+		return true
+	}
+	return false
 }
 
 // peekAPIKeyCredential 只读出请求里的 API Key（不写任何错误、不记无效鉴权）；没有时为空。
