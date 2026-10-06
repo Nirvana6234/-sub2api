@@ -11,6 +11,7 @@
 	# 从节点域名申请证书。ask 接口只给"后台已登记的从节点域名"放行，其余一律拒绝，所以别人把任意域名
 	# 解析过来也申请不到证书。端口要和主节点 relay.domain_ask_addr（RELAY_DOMAIN_ASK_ADDR，只能是回环地址）一致。
 	# 没打开主从分流或没配置 domain_ask_addr 时 ask 不可达，Caddy 会拒绝为这些域名签发，对现有站点没有影响。
+	# 注意：主节点跑在 Docker 桥接网络里、Caddy 在宿主机上时，宿主机连不到容器的回环，ask 不通（见 docs/RELAY_NODE_OPS.md 第 1 节）。
 	on_demand_tls {
 		ask http://127.0.0.1:9002/
 	}

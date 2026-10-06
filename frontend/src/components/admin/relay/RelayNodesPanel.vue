@@ -235,6 +235,24 @@
       </template>
     </BaseDialog>
 
+    <!-- after a revoke: secrets the node had in memory must be replaced -->
+    <BaseDialog :show="dialog.kind === 'revoked'" :title="t('admin.relay.revoke.followupTitle')" @close="closeDialog">
+      <div v-if="dialog.kind === 'revoked'" class="space-y-2 text-sm text-gray-700 dark:text-gray-300" data-test="revoke-followup">
+        <p>{{ t('admin.relay.revoke.followupIntro', { name: nodeLabel(dialog.node) }) }}</p>
+        <ul class="list-disc pl-5">
+          <li>{{ t('admin.relay.revoke.followupModeration') }}</li>
+          <li>{{ t('admin.relay.revoke.followupPromptAudit') }}</li>
+          <li>{{ t('admin.relay.revoke.followupWebSearch') }}</li>
+          <li>{{ t('admin.relay.revoke.followupKeys') }}</li>
+        </ul>
+      </div>
+      <template #footer>
+        <div class="flex justify-end">
+          <button type="button" class="btn btn-primary" data-test="revoke-followup-close" @click="closeDialog">{{ t('common.close') }}</button>
+        </div>
+      </template>
+    </BaseDialog>
+
     <!-- replace -->
     <BaseDialog :show="dialog.kind === 'replace'" :title="t('admin.relay.replace.title')" @close="closeDialog">
       <div v-if="dialog.kind === 'replace'" class="space-y-3">
@@ -350,6 +368,7 @@ type Dialog =
   | { kind: 'replace'; node: RelayNode }
   | { kind: 'moveKeys'; node: RelayNode }
   | { kind: 'details'; node: RelayNode }
+  | { kind: 'revoked'; node: RelayNode }
   | { kind: 'confirm'; action: SimpleAction; node?: RelayNode }
 
 const dialog = ref<Dialog>({ kind: 'none' })
@@ -538,9 +557,11 @@ async function submitRevoke(): Promise<void> {
   const id = dialog.value.node.id
   busy.value = true
   try {
+    const node = dialog.value.node
     const ok = await action.runOk(() => adminAPI.relay.revokeNode(id, form.reason.trim()), t('admin.relay.revoke.done'))
     if (ok) {
-      closeDialog()
+      // The node held the moderation key, prompt-audit credentials and web-search key in memory: say what to rotate.
+      dialog.value = { kind: 'revoked', node }
       emit('refresh')
     }
   } finally {

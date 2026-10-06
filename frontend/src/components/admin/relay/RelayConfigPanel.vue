@@ -85,10 +85,20 @@
     </section>
 
     <div class="flex justify-end">
-      <button type="button" class="btn btn-primary" :disabled="saving" data-test="save-config" @click="save">
+      <button type="button" class="btn btn-primary" :disabled="saving" data-test="save-config" @click="requestSave">
         {{ t('common.save') }}
       </button>
     </div>
+
+    <!-- Turning the master's share to 0 strands whatever is still assigned to it: ask first. -->
+    <ConfirmDialog
+      :show="confirmZero"
+      :title="t('admin.relay.config.zeroConfirmTitle')"
+      :message="t('admin.relay.config.zeroConfirmMessage', { keys: masterKeys, users: masterUsers })"
+      danger
+      @confirm="confirmZeroSave"
+      @cancel="confirmZero = false"
+    />
   </div>
 </template>
 
@@ -97,6 +107,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
 import type { RelayGeneralConfig, RelayKeyAssignmentSummary } from '@/api/admin/relay'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import type { StepUpController } from '@/composables/useStepUp'
@@ -113,6 +124,7 @@ const emit = defineEmits<{ (e: 'saved', cfg: RelayGeneralConfig): void }>()
 const { t } = useI18n()
 const action = useRelayAction(props.stepUp)
 const saving = ref(false)
+const confirmZero = ref(false)
 const probeEnabled = ref(true)
 const form = reactive<RelayGeneralConfig>({})
 
@@ -136,6 +148,20 @@ const ratioZero = computed(() => form.master_ratio_percent === 0 && (props.confi
 const ratioChanged = computed(
   () => form.master_ratio_percent !== undefined && form.master_ratio_percent !== props.config?.master_ratio_percent
 )
+
+/** Going to 0 while the master still carries keys or users needs an explicit yes; anything else saves directly. */
+function requestSave(): void {
+  if (ratioZero.value && (masterKeys.value > 0 || masterUsers.value > 0)) {
+    confirmZero.value = true
+    return
+  }
+  void save()
+}
+
+function confirmZeroSave(): void {
+  confirmZero.value = false
+  void save()
+}
 
 async function save(): Promise<void> {
   saving.value = true

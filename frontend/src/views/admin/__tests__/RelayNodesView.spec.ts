@@ -291,6 +291,56 @@ describe('从节点管理页', () => {
     expect(warning.text()).toContain('"users":2')
   })
 
+  it('主节点比例改成 0：主节点上还有 Key 和用户时先确认，取消不保存，确认才保存', async () => {
+    api.updateGeneralConfig.mockResolvedValue({ master_ratio_percent: 0 })
+    const wrapper = await mounted()
+    await wrapper.get('[data-test="tab-config"]').trigger('click')
+    await wrapper.get('[data-test="master-ratio"]').setValue('0')
+
+    await wrapper.get('[data-test="save-config"]').trigger('click')
+    await flushPromises()
+    expect(api.updateGeneralConfig).not.toHaveBeenCalled()
+
+    // 取消：什么都不保存
+    await buttonByText(wrapper, 'common.cancel').trigger('click')
+    await flushPromises()
+    expect(api.updateGeneralConfig).not.toHaveBeenCalled()
+
+    await wrapper.get('[data-test="save-config"]').trigger('click')
+    await buttonByText(wrapper, 'common.confirm').trigger('click')
+    await flushPromises()
+    expect(api.updateGeneralConfig).toHaveBeenCalledTimes(1)
+    expect(api.updateGeneralConfig.mock.calls[0][0].master_ratio_percent).toBe(0)
+  })
+
+  it('主节点比例改成 0：主节点上已经没有 Key 和用户时直接保存', async () => {
+    api.keyAssignmentSummary.mockResolvedValue({ unassigned: 0, master: 0, nodes: { '1': { total: 7, active: 4 } } })
+    api.userAssignmentSummary.mockResolvedValue({ '1': 6 })
+    api.updateGeneralConfig.mockResolvedValue({ master_ratio_percent: 0 })
+    const wrapper = await mounted()
+    await wrapper.get('[data-test="tab-config"]').trigger('click')
+    await wrapper.get('[data-test="master-ratio"]').setValue('0')
+    await wrapper.get('[data-test="save-config"]').trigger('click')
+    await flushPromises()
+
+    expect(api.updateGeneralConfig).toHaveBeenCalledTimes(1)
+  })
+
+  it('吊销节点后提醒更换审核、提示词审计、联网搜索的密钥', async () => {
+    api.revokeNode.mockResolvedValue(undefined)
+    const wrapper = await mounted()
+    await wrapper.get('[data-test="node-1"] [data-test="revoke"]').trigger('click')
+    await wrapper.get('[data-test="revoke-reason"]').setValue('suspected compromise')
+    await wrapper.get('[data-test="revoke-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(api.revokeNode).toHaveBeenCalledWith(1, 'suspected compromise')
+    const followup = wrapper.get('[data-test="revoke-followup"]').text()
+    expect(followup).toContain('admin.relay.revoke.followupModeration')
+    expect(followup).toContain('admin.relay.revoke.followupPromptAudit')
+    expect(followup).toContain('admin.relay.revoke.followupWebSearch')
+  })
+
   it('分配页：提示未分配的 Key，并能一键分配', async () => {
     api.assignUnassignedKeys.mockResolvedValue({ assigned: 3, left: 0 })
     const wrapper = await mounted()

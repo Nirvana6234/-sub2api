@@ -103,7 +103,13 @@ export default {
       title: '吊销节点证书',
       hint: '怀疑这台被攻破时使用：立刻吊销它的证书并断开连接，节点退回待激活。之后要用新的加密密钥重新部署，这台上存的敏感配置不再可信。',
       reason: '原因（写进审计记录）',
-      done: '已吊销，节点退回待激活'
+      done: '已吊销，节点退回待激活',
+      followupTitle: '请更换这台节点持有过的密钥',
+      followupIntro: '「{name}」已吊销。下面这些密钥曾经加密下发给它、保存在它的内存里，不能再认为安全：',
+      followupModeration: '内容审核接口的 Key（在风控中心的审核配置里更换；建议用只开审核权限、有额度上限的 Key）',
+      followupPromptAudit: '提示词审计的接口凭据（在提示词审计配置里更换）',
+      followupWebSearch: '联网搜索的 Key 和这些配置引用的代理（在系统设置里更换）',
+      followupKeys: '分到这台的 API Key 已经发给过它：用「转移 Key」改到别的节点，并建议这些用户重置 Key'
     },
     replace: {
       title: '换机器',
@@ -196,6 +202,8 @@ export default {
       masterRatio: '主节点分配比例（%）',
       masterRatioHint: '新用户和新 Key 里分给主节点的比例，默认 10。为 0 时主节点不做任何中转。',
       masterRatioZeroWarning: '比例设为 0 后主节点不再中转：当前分给主节点的 {keys} 把 Key 和 {users} 个用户需要先转到从节点，否则它们会连不上。',
+      zeroConfirmTitle: '主节点比例改为 0',
+      zeroConfirmMessage: '改为 0 后主节点不再做任何中转，现在还分给主节点的 {keys} 把 Key 和 {users} 个用户会连不上，直到你把它们转到从节点。仍然保存？',
       masterRatioImpact: '当前分给主节点的有 {keys} 把 Key 和 {users} 个用户，改比例不会移动它们。',
       keyRule: 'API Key 可用的节点',
       keyRuleHint: '「仅分配的节点」时，Key 只在分到的那台能用，其余节点转交到它所在的节点。',

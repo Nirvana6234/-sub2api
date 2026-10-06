@@ -106,7 +106,13 @@ export default {
       title: 'Revoke node certificate',
       hint: 'Use when you suspect this node was compromised: its certificate is revoked and its connection dropped, and it goes back to pending. Redeploy it with fresh encryption keys; sensitive config stored on it can no longer be trusted.',
       reason: 'Reason (written to the audit log)',
-      done: 'Revoked; the node is back to pending'
+      done: 'Revoked; the node is back to pending',
+      followupTitle: 'Replace the secrets this node held',
+      followupIntro: '"{name}" is revoked. These secrets were sent to it encrypted and held in its memory; treat them as exposed:',
+      followupModeration: 'The content moderation API key (replace it in the moderation settings; use a key limited to moderation with a spending cap)',
+      followupPromptAudit: 'The prompt-audit API credentials (replace them in the prompt-audit settings)',
+      followupWebSearch: 'The web-search keys and the proxies those settings refer to (replace them in system settings)',
+      followupKeys: 'API keys assigned to this node were given to it: move them to another node with "Move keys" and ask those users to reset their keys'
     },
     replace: {
       title: 'Replace machine',
@@ -202,6 +208,8 @@ export default {
       masterRatioHint: 'Share of new users and keys given to the master, default 10. At 0 the master does no relaying.',
       masterRatioZeroWarning:
         'At 0 the master stops relaying: the {keys} keys and {users} users currently on the master must be moved to nodes first or they will stop working.',
+      zeroConfirmTitle: 'Set master share to 0',
+      zeroConfirmMessage: 'At 0 the master stops relaying: the {keys} keys and {users} users still on it will stop working until you move them to nodes. Save anyway?',
       masterRatioImpact: '{keys} keys and {users} users are on the master now; changing the share does not move them.',
       keyRule: 'Nodes an API key may use',
       keyRuleHint: 'With "assigned only", a key works only on its own node; other nodes hand the request over to it.',
