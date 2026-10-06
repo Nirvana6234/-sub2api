@@ -15,9 +15,10 @@ import (
 type hostLoad struct {
 	inflight atomic.Int64
 
-	mu      sync.Mutex
-	samples []hostSample
-	last    hostSample
+	mu          sync.Mutex
+	samples     []hostSample
+	last        hostSample
+	capNotified time.Time
 }
 
 type hostSample struct {
@@ -100,6 +101,50 @@ func (r *Runtime) masterLoad() float64 {
 	return load
 }
 
+// noteMasterCapReached 主节点转发达到上限、开始拒绝请求（设计 13）：每分钟最多通知一次，不在请求路径上等通知发完。
+func (r *Runtime) noteMasterCapReached(detail map[string]any) {
+	if r.deps.Notifier == nil {
+		return
+	}
+	now := r.now()
+	r.host.mu.Lock()
+	due := now.Sub(r.host.capNotified) >= time.Minute
+	if due {
+		r.host.capNotified = now
+	}
+	r.host.mu.Unlock()
+	if due {
+		go r.deps.Notifier.Notify(context.Background(), Event{Kind: EventMasterCapReached, Severity: SeverityCritical, Detail: detail})
+	}
+}
+
+// NodeContext 提供通知内容里的节点信息（实现 relaynotify.ContextSource）。
+func (r *Runtime) NodeContext(ctx context.Context, nodeID int64) (NodeContext, bool) {
+	n, err := r.deps.Store.GetByID(ctx, nodeID)
+	if err != nil {
+		return NodeContext{}, false
+	}
+	out := NodeContext{Name: n.Name, IP: n.LastSeenIP}
+	if out.IP == "" {
+		out.IP = n.RegisteredIP
+	}
+	if rr, err := r.runningRelay(); err == nil {
+		if rr.heartbeats != nil {
+			h := rr.heartbeats.Health(nodeID, n.BandwidthLimitMbps)
+			out.LastHeartbeat = h.LastAt
+			if h.Beat != nil {
+				out.ActiveKeys, out.Inflight = int(h.Beat.GetActiveKeys()), int(h.Beat.GetInflightRequests())
+			}
+		}
+		if rr.users != nil {
+			if counts, err := rr.users.store.CountByNode(ctx); err == nil {
+				out.AssignedUsers = counts[nodeID]
+			}
+		}
+	}
+	return out, true
+}
+
 // AcquireMasterSlot 实现 middleware.RelayMasterGate：主节点转发占一个并发名额；超过上限（通用配置 master_max_concurrent，
 // 带宽超过 master_max_bandwidth_mbps 时同样）返回 ok=false，调用方回"服务繁忙"。主从分流没在运行时不限。
 func (r *Runtime) AcquireMasterSlot(ctx context.Context) (release func(), ok bool) {
@@ -108,9 +153,11 @@ func (r *Runtime) AcquireMasterSlot(ctx context.Context) (release func(), ok boo
 	}
 	cfg := r.cachedGeneralConfig(ctx).WithDefaults()
 	if cfg.MasterMaxConcurrent > 0 && r.host.inflight.Load() >= int64(cfg.MasterMaxConcurrent) {
+		r.noteMasterCapReached(map[string]any{"reason": "concurrency", "limit": cfg.MasterMaxConcurrent})
 		return nil, false
 	}
 	if cfg.MasterMaxBandwidthMbps > 0 && r.host.peakRate()*8/(float64(cfg.MasterMaxBandwidthMbps)*1e6) >= 1 {
+		r.noteMasterCapReached(map[string]any{"reason": "bandwidth", "limit_mbps": cfg.MasterMaxBandwidthMbps})
 		return nil, false
 	}
 	r.host.inflight.Add(1)

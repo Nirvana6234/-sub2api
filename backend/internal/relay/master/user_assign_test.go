@@ -328,3 +328,97 @@ func TestMasterForwardingCap(t *testing.T) {
 	r2()
 	r3()
 }
+
+// 设计 13：所有从节点不可用时，进入"回退到主节点"、进入"服务中断"、恢复各通知一次（状态变化时，不是每次询问）；比例改动、
+// 转发达到上限也通知；通知内容里的节点信息来自运行时。
+func TestAvailabilityAndConfigEventsAreNotified(t *testing.T) {
+	ctx := context.Background()
+	h := newUserAssignHarness(t, 10)
+	count := func(kind string) int {
+		n := 0
+		for _, k := range h.notifier.kinds() {
+			if k == kind {
+				n++
+			}
+		}
+		return n
+	}
+	eventually := func(kind string, want int) {
+		require.Eventually(t, func() bool { return count(kind) == want }, 3*time.Second, 10*time.Millisecond, kind)
+	}
+
+	h.rnd = 0.9
+	h.assign(t, 1, 0)
+	require.Zero(t, count(master.EventAllRelaysDownFallback), "relays are fine")
+
+	h.advance(20 * time.Second) // 两台都掉线
+	h.assign(t, 2, 0)
+	h.assign(t, 3, 0)
+	eventually(master.EventAllRelaysDownFallback, 1)
+
+	// 比例改成 0：服务中断；改比例本身也通知一次。
+	zero := 0
+	_, err := h.runtime.SetGeneralConfig(ctx, 1, master.GeneralConfig{MasterRatioPercent: &zero})
+	require.NoError(t, err)
+	require.Equal(t, 1, count(master.EventMasterRatioChanged))
+	_, err = h.runtime.SetGeneralConfig(ctx, 1, master.GeneralConfig{MasterRatioPercent: &zero})
+	require.NoError(t, err)
+	require.Equal(t, 1, count(master.EventMasterRatioChanged), "an unchanged ratio is not an event")
+
+	// 通用配置缓存 5 秒：直接换成新运行时读到 0 太慢，这里用管理员把用户固定到主节点之外的方式验证"服务中断"的通知。
+	h2 := newUserAssignHarness(t, 0)
+	h2.advance(20 * time.Second)
+	_, err = h2.runtime.AssignUser(ctx, 1, 0)
+	require.ErrorIs(t, err, service.ErrRelayUnavailable)
+	require.Eventually(t, func() bool {
+		for _, k := range h2.notifier.kinds() {
+			if k == master.EventAllRelaysDownOutage {
+				return true
+			}
+		}
+		return false
+	}, 3*time.Second, 10*time.Millisecond)
+
+	// 恢复：有从节点可用后通知一次。
+	h.beat(h.nodes[0].ID, 0)
+	h.assign(t, 2, 0)
+	eventually(master.EventRelayRecovered, 1)
+	h.assign(t, 2, 0)
+	eventually(master.EventRelayRecovered, 1)
+
+	// 通知内容里的节点信息。
+	nc, ok := h.runtime.NodeContext(ctx, h.nodes[0].ID)
+	require.True(t, ok)
+	require.NotNil(t, nc.LastHeartbeat)
+	_, ok = h.runtime.NodeContext(ctx, 999)
+	require.False(t, ok)
+}
+
+// 主节点转发达到上限、开始拒绝请求：通知一次（每分钟最多一次，不在请求路径上等通知发完）。
+func TestMasterCapReachedIsNotified(t *testing.T) {
+	ctx := context.Background()
+	n := &captureNotifier{}
+	h := newRuntimeWith(t, nil, func(d *master.RuntimeDeps) { d.Notifier = n })
+	_, err := h.runtime.SetGeneralConfig(ctx, 1, master.GeneralConfig{MasterMaxConcurrent: 1})
+	require.NoError(t, err)
+	st, err := h.runtime.SetEnabled(ctx, 1, true)
+	require.NoError(t, err)
+	require.Equal(t, master.StateRunning, st.State, st.Reason)
+
+	release, ok := h.runtime.AcquireMasterSlot(ctx)
+	require.True(t, ok)
+	for i := 0; i < 5; i++ {
+		_, ok = h.runtime.AcquireMasterSlot(ctx)
+		require.False(t, ok)
+	}
+	require.Eventually(t, func() bool { return len(n.kinds()) >= 1 }, 3*time.Second, 10*time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
+	count := 0
+	for _, k := range n.kinds() {
+		if k == master.EventMasterCapReached {
+			count++
+		}
+	}
+	require.Equal(t, 1, count, "five rejections, one notification")
+	release()
+}

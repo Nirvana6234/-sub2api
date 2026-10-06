@@ -457,6 +457,18 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 	relayv1.RegisterRelayEnrollmentServer(server.GRPC(), NewEnrollment(nodes, server))
 	control := NewControl(publisher)
 	heartbeats := NewHeartbeats(HeartbeatsOptions{
+		Bandwidths: func() map[int64]int {
+			out := map[int64]int{}
+			if list, err := r.deps.Store.List(context.Background()); err == nil {
+				for _, n := range list {
+					out[n.ID] = n.BandwidthLimitMbps
+				}
+			}
+			return out
+		},
+		LoadThreshold: func() float64 {
+			return float64(r.cachedGeneralConfig(context.Background()).WithDefaults().LoadThresholdPercent) / 100
+		},
 		Now: func() time.Time { return r.now() }, Notifier: r.deps.Notifier, Sink: r.deps.Metrics,
 		OfflineAfter: func() time.Duration {
 			return time.Duration(r.cachedGeneralConfig(context.Background()).WithDefaults().OfflineAfterSeconds) * time.Second
@@ -578,6 +590,10 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 	})
 	running.goRun(func() { publisher.RunRecheck(runCtx) })
 	running.goRun(func() { heartbeats.Run(runCtx) })
+	if runner, ok := r.deps.Notifier.(interface{ Run(context.Context) }); ok {
+		// 通知按合并窗口定时发出（同时发生的合成一条）。
+		running.goRun(func() { runner.Run(runCtx) })
+	}
 	if quotas != nil {
 		running.goRun(func() { quotas.RunExpiry(runCtx) })
 		running.goRun(func() { qEvents.run(runCtx) })
@@ -727,6 +743,9 @@ func (r *Runtime) audit(ctx context.Context, actor int64, action string, detail 
 	}
 }
 
+// Notifier 返回通知器（管理页配置飞书渠道用；没有时为 nil）。
+func (r *Runtime) Notifier() Notifier { return r.deps.Notifier }
+
 // ListNodes 列出所有节点（开关关闭时也能看）。
 func (r *Runtime) ListNodes(ctx context.Context) ([]*Node, error) { return r.deps.Store.List(ctx) }
 
@@ -744,6 +763,13 @@ func (r *Runtime) SetGeneralConfig(ctx context.Context, actor int64, g GeneralCo
 	if err != nil {
 		return GeneralConfig{}, err
 	}
+	defer func() {
+		// 主节点分配比例被修改（设计 13）：影响到哪些分配、哪些 Key，管理页的影响清单另有接口。
+		if after, err := r.GeneralConfig(ctx); err == nil && *before.MasterRatioPercent != *after.MasterRatioPercent && r.deps.Notifier != nil {
+			r.deps.Notifier.Notify(ctx, Event{Kind: EventMasterRatioChanged, Severity: SeverityInfo, Detail: map[string]any{
+				"from_percent": *before.MasterRatioPercent, "to_percent": *after.MasterRatioPercent}})
+		}
+	}()
 	raw, err := json.Marshal(g)
 	if err != nil {
 		return GeneralConfig{}, err

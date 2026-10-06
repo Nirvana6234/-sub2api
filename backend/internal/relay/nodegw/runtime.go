@@ -216,6 +216,15 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 		}
 		req.InflightSelectionIds = d.InflightSelections()
 		req.LogBacklog, req.LogDropped = int32(logSink.Backlog()), logSink.Dropped()
+		// 拒绝新请求的原因报给主节点（设计 13：磁盘满、扣费队列损坏、时钟偏差超限时通知管理员）。
+		switch {
+		case wal.Healthy() != nil:
+			req.BlockedReason = "usage_queue"
+		case !heartbeater.ClockHealthy():
+			req.BlockedReason = "clock_skew"
+		case stats.DiskLow():
+			req.BlockedReason = "disk_full"
+		}
 		return req
 	}, time.Duration(cache.GeneralHeartbeatSeconds())*time.Second)
 	go heartbeater.Run(runCtx)
@@ -259,6 +268,14 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 	r.Use(func(c *gin.Context) {
 		// 主从时钟偏差超过上限时不接新请求（设计第 19 节）：扣费凭证和额度到期都按时间判断。
 		if !heartbeater.ClockHealthy() {
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"type": "api_error", "message": "Service temporarily unavailable"}})
+			return
+		}
+		c.Next()
+	})
+	r.Use(func(c *gin.Context) {
+		// 磁盘快满了不接新请求：扣费队列和日志写不进去，转发了记不上账。
+		if stats.DiskLow() {
 			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"type": "api_error", "message": "Service temporarily unavailable"}})
 			return
 		}

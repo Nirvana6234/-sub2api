@@ -18,6 +18,23 @@ import (
 // 负载（分配用，设计 10.1）= 近 1 分钟收发速率较大者 ÷ 带宽上限。
 
 const (
+	// 设计 13 的事件表里主节点自己产生的其余事件（WP13 的健康探测、域名、证书事件也在这里登记，由它们的实现发出）。
+	EventNodeUnreachable       = "node_unreachable"
+	EventNodeDegraded          = "node_degraded"
+	EventNodeDNSMismatch       = "node_dns_mismatch"
+	EventNodeCertFailed        = "node_cert_failed"
+	EventNodeCertExpiring      = "node_cert_expiring"
+	EventAllRelaysDownFallback = "all_relays_down_fallback"
+	EventAllRelaysDownOutage   = "all_relays_down_outage"
+	EventRelayRecovered        = "relay_recovered"
+	EventMasterRatioChanged    = "master_ratio_changed"
+	EventMasterCapReached      = "master_cap_reached"
+	EventBillingBacklog        = "billing_backlog"
+	EventNodeBlocked           = "node_blocked"
+	EventNodeUnstable          = "node_unstable"
+	EventNodeOverloaded        = "node_overloaded"
+	EventNodeStaleVersion      = "node_stale_version"
+
 	// EventNodeOffline、EventNodeOnline 是节点离线、恢复的通知事件（设计 13，WP15 接到飞书和邮件）。
 	EventNodeOffline = "node_offline"
 	EventNodeOnline  = "node_online"
@@ -111,13 +128,24 @@ type nodeBeat struct {
 	selects                                                   [60]selectBucket
 	stale                                                     []time.Time
 	skewAlerted, shortfallAlerted, floodAlerted, staleAlerted bool
-	shortfall                                                 int
+	// 其余边沿事件：扣费队列积压过多、拒绝服务、压力持续超阈值、配置版本落后。
+	backlogAlerted, blockedAlerted, overloadAlerted, versionAlerted bool
+	overSince, versionBehindSince                                   time.Time
+	shortfall                                                       int
 }
 
 type selectBucket struct {
 	sec int64
 	n   int32
 }
+
+// 扣费队列积压达到这么多条发 billing_backlog；压力超过阈值持续 overloadSustain 发 node_overloaded；
+// 配置版本落后持续 versionBehindFor 发 node_stale_version（设计 13 的表，后两项默认关）。
+const (
+	billingBacklogAlert = 5000
+	overloadSustain     = 5 * time.Minute
+	versionBehindFor    = 10 * time.Minute
+)
 
 // 异常检测阈值：近 1 分钟选号次数超过 selectFloodFactor × 节点自己报的请求数 + selectFloodSlack 就告警（一个请求最多换号重试
 // 十几次，正常不会到这个量）；近 10 分钟被定时清理放掉的选号达到 staleThreshold 次告警。
@@ -139,6 +167,10 @@ type Heartbeats struct {
 	offlineAfter func() time.Duration
 	notifier     Notifier
 	sink         MetricsSink
+	bandwidths   func() map[int64]int
+	threshold    func() float64
+	bwCache      map[int64]int
+	bwAt         time.Time
 
 	mu    sync.Mutex
 	nodes map[int64]*nodeBeat
@@ -153,11 +185,14 @@ type HeartbeatsOptions struct {
 	OfflineAfter func() time.Duration
 	Notifier     Notifier
 	Sink         MetricsSink
+	// Bandwidths 返回各节点的带宽上限（Mbps，算负载用；周期任务里最多 30 秒取一次）；LoadThreshold 返回负载阈值（0~1）。
+	Bandwidths    func() map[int64]int
+	LoadThreshold func() float64
 }
 
 // NewHeartbeats 创建心跳跟踪。
 func NewHeartbeats(o HeartbeatsOptions) *Heartbeats {
-	h := &Heartbeats{now: o.Now, offlineAfter: o.OfflineAfter, notifier: o.Notifier, sink: o.Sink, nodes: map[int64]*nodeBeat{}}
+	h := &Heartbeats{now: o.Now, offlineAfter: o.OfflineAfter, notifier: o.Notifier, sink: o.Sink, bandwidths: o.Bandwidths, threshold: o.LoadThreshold, nodes: map[int64]*nodeBeat{}}
 	if h.now == nil {
 		h.now = time.Now
 	}
@@ -200,7 +235,26 @@ func (h *Heartbeats) Record(ctx context.Context, nodeID int64, req *relayv1.Hear
 	alertSkew := skewOver && !n.skewAlerted
 	n.skewAlerted = skewOver
 	skew := n.skew
+	var extra []Event
+	backlog := int(req.GetBillingBacklog())
+	if over := backlog >= billingBacklogAlert; over && !n.backlogAlerted {
+		extra = append(extra, Event{Kind: EventBillingBacklog, Severity: SeverityWarning, NodeID: nodeID, Detail: map[string]any{"backlog": backlog}})
+		n.backlogAlerted = true
+	} else if !over {
+		n.backlogAlerted = false
+	}
+	if reason := req.GetBlockedReason(); reason != "" && !n.blockedAlerted {
+		extra = append(extra, Event{Kind: EventNodeBlocked, Severity: SeverityCritical, NodeID: nodeID, Detail: map[string]any{"reason": reason}})
+		n.blockedAlerted = true
+	} else if reason == "" {
+		n.blockedAlerted = false
+	}
 	h.mu.Unlock()
+	if h.notifier != nil {
+		for _, e := range extra {
+			h.notifier.Notify(ctx, e)
+		}
+	}
 
 	if !wasOnline && h.notifier != nil {
 		h.notifier.Notify(ctx, Event{Kind: EventNodeOnline, Severity: SeverityInfo, NodeID: nodeID})
@@ -397,6 +451,7 @@ func (h *Heartbeats) Tick(ctx context.Context) {
 			events = append(events, *e)
 		}
 		events = append(events, h.anomaliesLocked(id, n, now)...)
+		events = append(events, h.loadAndVersionLocked(id, n, now)...)
 	}
 	rows := h.pending
 	h.pending = nil
@@ -489,6 +544,65 @@ func (h *Heartbeats) anomaliesLocked(nodeID int64, n *nodeBeat, now time.Time) [
 	return out
 }
 
+// loadAndVersionLocked 压力持续超过阈值、配置版本持续落后（默认关的两类事件）：每种持续期间只告警一次。
+func (h *Heartbeats) loadAndVersionLocked(nodeID int64, n *nodeBeat, now time.Time) []Event {
+	var out []Event
+	if h.bandwidths != nil && h.threshold != nil && n.online {
+		if now.Sub(h.bwAt) >= 30*time.Second || h.bwCache == nil {
+			h.bwCache, h.bwAt = h.bandwidths(), now
+		}
+		if bw := h.bwCache[nodeID]; bw > 0 && len(n.samples) > 0 {
+			var peak uint64
+			var rx, tx uint64
+			for _, s := range n.samples {
+				rx += s.rx
+				tx += s.tx
+			}
+			peak = rx
+			if tx > peak {
+				peak = tx
+			}
+			load := float64(peak) / float64(len(n.samples)) * 8 / (float64(bw) * 1e6)
+			if load >= h.threshold() {
+				if n.overSince.IsZero() {
+					n.overSince = now
+				}
+				if now.Sub(n.overSince) >= overloadSustain && !n.overloadAlerted {
+					n.overloadAlerted = true
+					out = append(out, Event{Kind: EventNodeOverloaded, Severity: SeverityWarning, NodeID: nodeID, Detail: map[string]any{"load_percent": int(load * 100)}})
+				}
+			} else {
+				n.overSince, n.overloadAlerted = time.Time{}, false
+			}
+		}
+	}
+	if !n.versionBehindSince.IsZero() && now.Sub(n.versionBehindSince) >= versionBehindFor && !n.versionAlerted {
+		n.versionAlerted = true
+		out = append(out, Event{Kind: EventNodeStaleVersion, Severity: SeverityInfo, NodeID: nodeID, Detail: map[string]any{"config_version_behind_minutes": int(now.Sub(n.versionBehindSince).Minutes())}})
+	}
+	return out
+}
+
+// NoteConfigVersion 记节点报的配置版本和主节点给它的版本：持续对不上才算落后（刚推送、正在拉取的几秒不算）。
+func (h *Heartbeats) NoteConfigVersion(nodeID int64, nodeVersion, masterVersion string) {
+	if masterVersion == "" {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := h.nodes[nodeID]
+	if n == nil {
+		return
+	}
+	if nodeVersion == masterVersion {
+		n.versionBehindSince, n.versionAlerted = time.Time{}, false
+		return
+	}
+	if n.versionBehindSince.IsZero() {
+		n.versionBehindSince = h.now()
+	}
+}
+
 // Shortfall 返回对账算出的少报凭证数（超过阈值的节点，主节点不再给它发额度，见 Quotas）。
 func (h *Heartbeats) Shortfall(nodeID int64) int {
 	h.mu.Lock()
@@ -534,6 +648,7 @@ func (c *Control) Heartbeat(ctx context.Context, req *relayv1.HeartbeatRequest) 
 	resp := &relayv1.HeartbeatResponse{MasterTimeUnixMs: time.Now().UnixMilli()}
 	if c.heartbeatInfo != nil {
 		resp.ConfigVersion, resp.Draining = c.heartbeatInfo(ctx, peer.NodeID)
+		c.heartbeats.NoteConfigVersion(peer.NodeID, req.GetConfigVersion(), resp.ConfigVersion)
 	}
 	return resp, nil
 }

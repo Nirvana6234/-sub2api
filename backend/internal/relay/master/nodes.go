@@ -20,9 +20,10 @@ import (
 type Severity string
 
 const (
-	SeverityInfo     Severity = "info"
-	SeverityWarning  Severity = "warning"
-	SeverityCritical Severity = "critical"
+	SeverityInfo      Severity = "info"
+	SeverityWarning   Severity = "warning"
+	SeverityCritical  Severity = "critical"
+	SeverityEmergency Severity = "emergency"
 )
 
 // Event 是节点相关的通知事件，WP15 接到运维告警和飞书。
@@ -31,6 +32,17 @@ type Event struct {
 	Severity Severity
 	NodeID   int64
 	Detail   map[string]any
+}
+
+// NodeContext 是事件内容里的节点信息（设计 13：节点名称、IP、最后一次心跳、受影响的分配人数、活跃 Key 数、进行中的请求数；
+// 不含用户信息、密钥、凭据）。
+type NodeContext struct {
+	Name          string
+	IP            string
+	LastHeartbeat *time.Time
+	AssignedUsers int64
+	ActiveKeys    int
+	Inflight      int
 }
 
 // Notifier 发送节点事件。nil 表示不发。

@@ -1475,8 +1475,10 @@ type HeartbeatRequest struct {
 	// 本次启动以来累计写进本地扣费队列的记录数（主节点对照自己入账的条数检测丢失，设计 5.4）。
 	UsageRecordsEnqueuedTotal uint64 `protobuf:"varint,22,opt,name=usage_records_enqueued_total,json=usageRecordsEnqueuedTotal,proto3" json:"usage_records_enqueued_total,omitempty"`
 	// 近 1 分钟按（级别, 组件）汇总的日志条数、按（错误类型, 状态码）汇总的错误条数（告警用，不含内容）。
-	LogCounts     []*CountBucket `protobuf:"bytes,23,rep,name=log_counts,json=logCounts,proto3" json:"log_counts,omitempty"`
-	ErrorCounts   []*CountBucket `protobuf:"bytes,24,rep,name=error_counts,json=errorCounts,proto3" json:"error_counts,omitempty"`
+	LogCounts   []*CountBucket `protobuf:"bytes,23,rep,name=log_counts,json=logCounts,proto3" json:"log_counts,omitempty"`
+	ErrorCounts []*CountBucket `protobuf:"bytes,24,rep,name=error_counts,json=errorCounts,proto3" json:"error_counts,omitempty"`
+	// 这台现在拒绝新请求的原因（"usage_queue" 扣费队列不健康、"clock_skew" 时钟偏差超限、"disk_full" 磁盘快满了）；空表示在正常接请求。
+	BlockedReason string `protobuf:"bytes,25,opt,name=blocked_reason,json=blockedReason,proto3" json:"blocked_reason,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1677,6 +1679,13 @@ func (x *HeartbeatRequest) GetErrorCounts() []*CountBucket {
 		return x.ErrorCounts
 	}
 	return nil
+}
+
+func (x *HeartbeatRequest) GetBlockedReason() string {
+	if x != nil {
+		return x.BlockedReason
+	}
+	return ""
 }
 
 // CountBucket 是按两个标签汇总的条数。
@@ -10626,7 +10635,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\anode_id\x18\x03 \x01(\x03R\x06nodeId\x12+\n" +
 	"\x11root_fingerprints\x18\x04 \x03(\tR\x10rootFingerprints\"'\n" +
 	"\vPingRequest\x12\x18\n" +
-	"\apayload\x18\x01 \x01(\fR\apayload\"\xa2\b\n" +
+	"\apayload\x18\x01 \x01(\fR\apayload\"\xc9\b\n" +
 	"\x10HeartbeatRequest\x12'\n" +
 	"\x0fprogram_version\x18\x01 \x01(\tR\x0eprogramVersion\x12%\n" +
 	"\x0econfig_version\x18\x02 \x01(\tR\rconfigVersion\x12+\n" +
@@ -10658,7 +10667,8 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x1cusage_records_enqueued_total\x18\x16 \x01(\x04R\x19usageRecordsEnqueuedTotal\x12<\n" +
 	"\n" +
 	"log_counts\x18\x17 \x03(\v2\x1d.sub2api.relay.v1.CountBucketR\tlogCounts\x12@\n" +
-	"\ferror_counts\x18\x18 \x03(\v2\x1d.sub2api.relay.v1.CountBucketR\verrorCounts\"?\n" +
+	"\ferror_counts\x18\x18 \x03(\v2\x1d.sub2api.relay.v1.CountBucketR\verrorCounts\x12%\n" +
+	"\x0eblocked_reason\x18\x19 \x01(\tR\rblockedReason\"?\n" +
 	"\vCountBucket\x12\f\n" +
 	"\x01a\x18\x01 \x01(\tR\x01a\x12\f\n" +
 	"\x01b\x18\x02 \x01(\tR\x01b\x12\x14\n" +

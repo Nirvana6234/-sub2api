@@ -979,6 +979,11 @@ func registerRelayRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth
 		relay.POST("/nodes/:id/move-keys", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.MoveNodeKeys)
 		relay.POST("/nodes/:id/replace", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.ReplaceNode)
 
+		// 通知（设计第 13 节）：飞书渠道、每类事件的开关和渠道
+		relay.GET("/notifications", h.Admin.Relay.GetNotifications)
+		relay.PUT("/notifications", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.UpdateNotifications)
+		relay.POST("/notifications/test", h.Admin.Relay.TestNotification)
+
 		// 小白端用户的分配（设计 10.4、10.8）
 		relay.GET("/users/assignment", h.Admin.Relay.UserAssignmentSummary)
 		relay.POST("/users/rebalance", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.RebalanceUsers)

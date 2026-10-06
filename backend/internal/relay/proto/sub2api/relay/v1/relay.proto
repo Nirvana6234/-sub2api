@@ -273,6 +273,8 @@ message HeartbeatRequest {
   // 近 1 分钟按（级别, 组件）汇总的日志条数、按（错误类型, 状态码）汇总的错误条数（告警用，不含内容）。
   repeated CountBucket log_counts = 23;
   repeated CountBucket error_counts = 24;
+  // 这台现在拒绝新请求的原因（"usage_queue" 扣费队列不健康、"clock_skew" 时钟偏差超限、"disk_full" 磁盘快满了）；空表示在正常接请求。
+  string blocked_reason = 25;
 }
 
 // CountBucket 是按两个标签汇总的条数。

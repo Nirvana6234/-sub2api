@@ -13,6 +13,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
+	"github.com/Wei-Shaw/sub2api/internal/relay/relaynotify"
 	"github.com/Wei-Shaw/sub2api/internal/relay/relayselect"
 	"github.com/Wei-Shaw/sub2api/internal/relay/relaysettle"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
@@ -58,7 +59,18 @@ func ProvideMasterRuntime(
 	grokQuota *service.GrokQuotaService,
 	imageTasks *service.ImageTaskService,
 	pawConfig *service.PawConfigService,
+	encryptor service.SecretEncryptor,
+	email *service.EmailService,
 ) *master.Runtime {
+	// 通知（设计第 13 节）：从节点相关事件记进现有运维告警，另有飞书机器人渠道，失败改发邮件；飞书地址和密钥加密保存。
+	notifier := relaynotify.New(relaynotify.Options{
+		Settings: settings, Encryptor: encryptor,
+		Alerts: relaynotify.OpsAlerts{Ops: ops}, Email: relaynotify.OpsEmail{Ops: ops, Email: email},
+		SiteURL: func(ctx context.Context) string {
+			v, _ := settings.GetValue(ctx, service.SettingKeyFrontendURL)
+			return v
+		},
+	})
 	// 小白端转发接口（/paw/*）的校验服务：与本地路由同一份代码；不带附件服务（附件在从节点）。
 	pawKeys := service.APIKeyPawChatKeySource{Service: apiKeys}
 	pawChat := service.NewPawChatService(pawConfig, pawKeys)
@@ -74,6 +86,7 @@ func ProvideMasterRuntime(
 		AccessChanges:   accessChanges,
 		Users:           users,
 		Leases:          repository.NewRelayLeaseRepository(db),
+		Notifier:        notifier,
 		Metrics:         repository.NewRelayMetricsRepository(db),
 		UserAssignments: repository.NewRelayUserAssignmentRepository(db),
 		ReservedSink:    billing,
@@ -91,6 +104,7 @@ func ProvideMasterRuntime(
 			Vouchers: relayVoucherRecorder(db),
 		}),
 	})
+	notifier.SetContextSource(rt)
 	if promptAudit != nil {
 		// 提示词审计配置变了（新版本、风控开关、加载失败或恢复）当场重新生成快照推给从节点。
 		promptAudit.SetConfigChangeListener(func() {

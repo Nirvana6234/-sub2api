@@ -48,6 +48,8 @@ type userAssigner struct {
 	recent     map[int64][]time.Time
 	reports    map[int64]map[int64]time.Time // 节点 -> 用户 -> 报告时间
 	suppressed map[int64]time.Time           // 节点 -> 停止分配到什么时候
+	// availability 是"从节点是否可用"的当前状态（"" 还没判断过、ok、fallback、outage），状态变化时发通知。
+	availability string
 }
 
 func newUserAssigner(r *Runtime, store UserAssignmentStore) *userAssigner {
@@ -173,6 +175,7 @@ func (u *userAssigner) assign(ctx context.Context, userID, unreachable int64) (*
 		cur = nil
 	}
 	node, reason, err := u.decide(ctx, rr, cfg, byID, nodes, cur, unreachable)
+	u.trackAvailability(err, node, reason)
 	if err != nil {
 		return nil, err
 	}
@@ -340,6 +343,35 @@ func (u *userAssigner) result(ctx context.Context, rr *runningRelay, cfg General
 		out.RefreshAfter = half
 	}
 	return out, nil
+}
+
+// trackAvailability 记录"所有从节点不可用"的状态变化（设计 13 的三条事件）：进入回退（比例大于 0，临时分给主节点）、
+// 进入服务中断（比例为 0）、恢复（又有从节点可用）；只在状态变化时通知一次。
+func (u *userAssigner) trackAvailability(err error, node int64, reason string) {
+	state := "ok"
+	switch {
+	case errors.Is(err, service.ErrRelayUnavailable):
+		state = "outage"
+	case err == nil && node == 0 && reason == AssignReasonFallback:
+		state = "fallback"
+	case err != nil:
+		return
+	}
+	u.mu.Lock()
+	prev := u.availability
+	u.availability = state
+	u.mu.Unlock()
+	if prev == state || (prev == "" && state == "ok") || u.r.deps.Notifier == nil {
+		return
+	}
+	kind, sev := EventRelayRecovered, SeverityInfo
+	switch state {
+	case "fallback":
+		kind, sev = EventAllRelaysDownFallback, SeverityEmergency
+	case "outage":
+		kind, sev = EventAllRelaysDownOutage, SeverityEmergency
+	}
+	go u.r.deps.Notifier.Notify(context.Background(), Event{Kind: kind, Severity: sev})
 }
 
 // ---- 管理员操作（设计 10.4、10.8）----

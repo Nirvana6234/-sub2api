@@ -278,3 +278,67 @@ func TestHeartbeatsDetectSelectFloodAndUnreleasedSelections(t *testing.T) {
 	h.Tick(ctx)
 	require.Contains(t, notifier.kinds(), master.EventNodeUnreleased)
 }
+
+// 设计 13：扣费队列积压过多、节点拒绝新请求（磁盘满、队列损坏）、压力持续超阈值（默认关的事件，这里只检测）、配置版本持续落后。
+func TestHeartbeatsEmitTheRemainingNodeEvents(t *testing.T) {
+	ctx := context.Background()
+	clock := &hbClock{t: time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)}
+	notifier := &captureNotifier{}
+	h := master.NewHeartbeats(master.HeartbeatsOptions{Now: clock.now, Notifier: notifier,
+		Bandwidths:    func() map[int64]int { return map[int64]int{4: 100} },
+		LoadThreshold: func() float64 { return 0.85 }})
+	count := func(kind string) int {
+		n := 0
+		for _, k := range notifier.kinds() {
+			if k == kind {
+				n++
+			}
+		}
+		return n
+	}
+
+	h.Record(ctx, 4, beat(clock, func(r *relayv1.HeartbeatRequest) { r.BillingBacklog = 100 }))
+	require.Zero(t, count(master.EventBillingBacklog))
+	h.Record(ctx, 4, beat(clock, func(r *relayv1.HeartbeatRequest) { r.BillingBacklog = 6000 }))
+	h.Record(ctx, 4, beat(clock, func(r *relayv1.HeartbeatRequest) { r.BillingBacklog = 7000 }))
+	require.Equal(t, 1, count(master.EventBillingBacklog), "once while it lasts")
+	h.Record(ctx, 4, beat(clock, func(r *relayv1.HeartbeatRequest) { r.BillingBacklog = 10 }))
+	h.Record(ctx, 4, beat(clock, func(r *relayv1.HeartbeatRequest) { r.BillingBacklog = 9000 }))
+	require.Equal(t, 2, count(master.EventBillingBacklog), "and again after it cleared")
+
+	h.Record(ctx, 4, beat(clock, func(r *relayv1.HeartbeatRequest) { r.BlockedReason = "disk_full" }))
+	h.Record(ctx, 4, beat(clock, func(r *relayv1.HeartbeatRequest) { r.BlockedReason = "disk_full" }))
+	require.Equal(t, 1, count(master.EventNodeBlocked))
+	var reason any
+	for _, e := range notifier.events {
+		if e.Kind == master.EventNodeBlocked {
+			reason = e.Detail["reason"]
+		}
+	}
+	require.Equal(t, "disk_full", reason)
+
+	// 压力：100 Mbps 的节点下行 12.5 MB/s = 100%，持续 5 分钟以上。
+	for i := 0; i < 90; i++ {
+		clock.advance(5 * time.Second)
+		h.Record(ctx, 4, beat(clock, func(r *relayv1.HeartbeatRequest) { r.RxBytesPerSec = 12_500_000 }))
+		h.Tick(ctx)
+	}
+	require.Equal(t, 1, count(master.EventNodeOverloaded))
+
+	// 配置版本：持续对不上 10 分钟才算落后；对上了就清除。
+	h.NoteConfigVersion(4, "v1", "v2")
+	for i := 0; i < 130; i++ {
+		clock.advance(5 * time.Second)
+		h.Record(ctx, 4, beat(clock, nil))
+		h.Tick(ctx)
+	}
+	require.Equal(t, 1, count(master.EventNodeStaleVersion))
+	h.NoteConfigVersion(4, "v2", "v2")
+	h.NoteConfigVersion(4, "v2", "v3")
+	for i := 0; i < 10; i++ {
+		clock.advance(5 * time.Second)
+		h.Record(ctx, 4, beat(clock, nil))
+		h.Tick(ctx)
+	}
+	require.Equal(t, 1, count(master.EventNodeStaleVersion), "a fresh mismatch starts the clock again")
+}

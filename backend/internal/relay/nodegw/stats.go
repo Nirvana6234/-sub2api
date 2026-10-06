@@ -25,6 +25,8 @@ type Stats struct {
 
 	inflight atomic.Int32
 	conns    atomic.Int32
+	// diskLow：数据目录所在磁盘剩余空间低于 diskLowBytes（心跳采样时更新）；队列和日志都写在这里，写满了扣费记录会丢，所以拒绝新请求。
+	diskLow atomic.Bool
 
 	mu      sync.Mutex
 	buckets [60]statBucket
@@ -53,6 +55,12 @@ type nicSample struct {
 
 // activeWindow 是"活跃用户 / 活跃 Key"的统计窗口。
 const activeWindow = 5 * time.Minute
+
+// diskLowBytes 是"磁盘快满了"的剩余空间下限。
+const diskLowBytes = 256 << 20
+
+// DiskLow 报告数据目录所在磁盘快满了。
+func (s *Stats) DiskLow() bool { return s.diskLow.Load() }
 
 // NewStats 创建收集器。
 func NewStats() *Stats {
@@ -177,6 +185,7 @@ func (s *Stats) Snapshot(ctx context.Context, dataDir string) *relayv1.Heartbeat
 	if dataDir != "" {
 		if u, err := disk.UsageWithContext(ctx, dataDir); err == nil {
 			req.DiskFreeBytes = u.Free
+			s.diskLow.Store(u.Free < diskLowBytes)
 		}
 	}
 	return req

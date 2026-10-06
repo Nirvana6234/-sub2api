@@ -11,6 +11,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/relay/keystore"
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
+	"github.com/Wei-Shaw/sub2api/internal/relay/relaynotify"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/gin-gonic/gin"
 )
@@ -149,7 +150,7 @@ func relayError(c *gin.Context, err error) {
 	case errors.Is(err, master.ErrNodeNotFound), errors.Is(err, master.ErrKeyNotFound), errors.Is(err, master.ErrAssignmentNotFound):
 		err = infraerrors.NotFound("RELAY_NOT_FOUND", err.Error())
 	case errors.Is(err, master.ErrFingerprintMismatch), errors.Is(err, master.ErrDomainRequired),
-		errors.Is(err, master.ErrInvalidGeneralConfig), errors.Is(err, master.ErrUnknownKeyPurpose), errors.Is(err, master.ErrInvalidPin):
+		errors.Is(err, master.ErrInvalidGeneralConfig), errors.Is(err, master.ErrUnknownKeyPurpose), errors.Is(err, master.ErrInvalidPin), errors.Is(err, relaynotify.ErrInvalidConfig):
 		err = infraerrors.BadRequest("RELAY_INVALID_REQUEST", err.Error())
 	case errors.Is(err, master.ErrRelayNotRunning), errors.Is(err, master.ErrKeyAssignmentUnavailable):
 		err = infraerrors.Conflict("RELAY_NOT_RUNNING", err.Error())
@@ -562,6 +563,73 @@ func (h *RelayHandler) queryLogs(c *gin.Context, ids []int64) {
 		return
 	}
 	response.Success(c, gin.H{"nodes": results, "records": master.MergeLogResults(results, int(q.Limit))})
+}
+
+// ---- 通知（设计第 13 节）----
+
+func (h *RelayHandler) notifier(c *gin.Context) (*relaynotify.Notifier, bool) {
+	n, ok := h.runtime.Notifier().(*relaynotify.Notifier)
+	if !ok || n == nil {
+		response.ErrorFrom(c, infraerrors.Conflict("RELAY_NOTIFICATIONS_UNAVAILABLE", "relay notifications are not available"))
+		return nil, false
+	}
+	return n, true
+}
+
+// GetNotifications 返回通知配置：飞书渠道（地址和密钥不回传，只说配了没有）、邮件、合并窗口、每类事件的开关和渠道。
+// GET /api/v1/admin/relay/notifications
+func (h *RelayHandler) GetNotifications(c *gin.Context) {
+	n, ok := h.notifier(c)
+	if !ok {
+		return
+	}
+	cfg, err := n.Config(c.Request.Context())
+	if err != nil {
+		relayError(c, err)
+		return
+	}
+	response.Success(c, cfg)
+}
+
+// UpdateNotifications 修改通知配置（飞书 Webhook 地址和签名密钥加密保存；二次验证）。
+// PUT /api/v1/admin/relay/notifications
+func (h *RelayHandler) UpdateNotifications(c *gin.Context) {
+	n, ok := h.notifier(c)
+	if !ok {
+		return
+	}
+	var upd relaynotify.ConfigUpdate
+	if err := c.ShouldBindJSON(&upd); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	if _, ok := relayActor(c); !ok {
+		return
+	}
+	cfg, err := n.SetConfig(c.Request.Context(), upd)
+	if err != nil {
+		relayError(c, err)
+		return
+	}
+	response.Success(c, cfg)
+}
+
+// TestNotification 向飞书发一条测试消息；失败原样报错（不改发邮件）。
+// POST /api/v1/admin/relay/notifications/test
+func (h *RelayHandler) TestNotification(c *gin.Context) {
+	n, ok := h.notifier(c)
+	if !ok {
+		return
+	}
+	if err := n.SendTest(c.Request.Context()); err != nil {
+		if errors.Is(err, relaynotify.ErrFeishuNotConfigured) {
+			response.ErrorFrom(c, infraerrors.BadRequest("RELAY_FEISHU_NOT_CONFIGURED", err.Error()))
+			return
+		}
+		response.ErrorFrom(c, infraerrors.ServiceUnavailable("RELAY_FEISHU_SEND_FAILED", "the test message could not be delivered"))
+		return
+	}
+	response.Success(c, gin.H{"sent": true})
 }
 
 // ---- 小白端用户的分配（设计 10.1、10.4、10.8）----
