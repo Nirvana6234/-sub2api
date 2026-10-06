@@ -129,6 +129,13 @@ internal sealed class LocalPawRelay : IAsyncDisposable
     private readonly Func<string, CancellationToken, Task>? _onAccessTokenRejected;
 
     /// <summary>
+    /// Where each forwarded request goes. Null means the server itself, with the account session - what this relay
+    /// always did. Set, the server may instead have assigned this user to a relay node, which takes a ticket on its
+    /// own address; see <see cref="IRelayTargetProvider"/>.
+    /// </summary>
+    private readonly IRelayTargetProvider? _relayTargets;
+
+    /// <summary>
     /// Told what one request's filter measurement was, whenever there was one to
     /// report. Not the same question as the log line: this is for a running total
     /// (see <c>ContextFilterUsageStore</c>) rather than for a human reading one line
@@ -193,9 +200,11 @@ internal sealed class LocalPawRelay : IAsyncDisposable
         HttpClient? directHttp = null,
         Action<LocalProxyOutcome>? onLocalProxyOutcome = null,
         Action<LocalProxyUsage>? onLocalProxyUsage = null,
-        ICodexCatalogSource? codexCatalogSource = null)
+        ICodexCatalogSource? codexCatalogSource = null,
+        IRelayTargetProvider? relayTargets = null)
     {
         _codexCatalogSource = codexCatalogSource;
+        _relayTargets = relayTargets;
         if (!Uri.TryCreate(upstreamBaseUrl, UriKind.Absolute, out Uri? uri) ||
             uri.Scheme is not ("http" or "https"))
             throw new ArgumentException("upstreamBaseUrl must be an absolute HTTP URL", nameof(upstreamBaseUrl));
@@ -693,10 +702,18 @@ internal sealed class LocalPawRelay : IAsyncDisposable
                 return;
             }
 
-            string jwt;
+            RelayTarget target;
             try
             {
-                jwt = await _accessToken(cancellationToken).ConfigureAwait(false);
+                target = _relayTargets is null
+                    ? new RelayTarget(_upstream, await _accessToken(cancellationToken).ConfigureAwait(false), IsRelay: false, NodeId: 0)
+                    : await _relayTargets.GetTargetAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (RelayUnavailableException ex)
+            {
+                ClientLog.Warning("没有可用的中转", ex);
+                await WriteErrorAsync(context, 503, "the relay service is temporarily unavailable, please try again later", protocol).ConfigureAwait(false);
+                return;
             }
             catch (Exception ex) when (ex is RelayApiException or InvalidOperationException)
             {
@@ -728,11 +745,22 @@ internal sealed class LocalPawRelay : IAsyncDisposable
                 body = KeepModelInsideGroup(body, group, groupName);
             }
 
-            using HttpRequestMessage request = BuildUpstreamRequest(context, served, body, jwt, group);
+            HttpRequestMessage request;
+            HttpResponseMessage sent;
+            try
+            {
+                (request, sent, target) = await SendUpstreamAsync(context, served, body, target, group, cancellationToken).ConfigureAwait(false);
+            }
+            catch (RelayUnavailableException ex)
+            {
+                ClientLog.Warning("没有可用的中转", ex);
+                await WriteErrorAsync(context, 503, "the relay service is temporarily unavailable, please try again later", protocol).ConfigureAwait(false);
+                return;
+            }
 
-            using HttpResponseMessage response = await _http
-                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
-                .ConfigureAwait(false);
+            using HttpRequestMessage requestScope = request;
+            using HttpResponseMessage response = sent;
+            string jwt = target.Bearer;
 
             if (!response.IsSuccessStatusCode)
             {
@@ -750,6 +778,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
                 // login surface if that renewal is rejected too. A gateway error may
                 // also be 401; in that case renewal succeeds and the session stays.
                 if (response.StatusCode == HttpStatusCode.Unauthorized &&
+                    !target.IsRelay &&
                     _onAccessTokenRejected is not null)
                 {
                     try
@@ -1124,6 +1153,75 @@ internal sealed class LocalPawRelay : IAsyncDisposable
     };
 
     /// <summary>
+    /// Sends the request, and - only when the server assigned a relay node - moves to another one if this one cannot
+    /// be reached or refuses the ticket. Each of those happens at most once per request, so a broken relay cannot
+    /// loop; the body is already in memory, so resending is safe.
+    /// </summary>
+    /// <remarks>
+    /// Only a failure to connect counts as unreachable: a connection that dies after the request went out
+    /// may already have been processed, and sending it again could charge twice.
+    /// </remarks>
+    private async Task<(HttpRequestMessage Request, HttpResponseMessage Response, RelayTarget Target)> SendUpstreamAsync(
+        HttpListenerContext context,
+        RelayRoute route,
+        byte[] body,
+        RelayTarget target,
+        long? group,
+        CancellationToken cancellationToken)
+    {
+        bool reported = false;
+        bool refreshed = false;
+        while (true)
+        {
+            HttpRequestMessage request = BuildUpstreamRequest(context, route, body, target, group);
+            HttpResponseMessage response;
+            try
+            {
+                response = await _http
+                    .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (HttpRequestException ex) when (!reported && _relayTargets is not null && target.IsRelay && IsConnectFailure(ex))
+            {
+                request.Dispose();
+                reported = true;
+                ClientLog.Warning($"连不上中转节点 {target.NodeId}，向服务器报告并换一个", ex);
+                target = await _relayTargets.ReportUnreachableAsync(target, cancellationToken).ConfigureAwait(false)
+                    ?? throw new RelayUnavailableException("the assigned relay node cannot be reached and no other is available");
+                continue;
+            }
+            catch
+            {
+                request.Dispose();
+                throw;
+            }
+
+            if (response.StatusCode == HttpStatusCode.Unauthorized && target.IsRelay && !refreshed && _relayTargets is not null)
+            {
+                // The ticket expired or was revoked: ask for a fresh one and send once more.
+                refreshed = true;
+                RelayTarget? next = await _relayTargets.RefreshAsync(target, cancellationToken).ConfigureAwait(false);
+                if (next is not null)
+                {
+                    response.Dispose();
+                    request.Dispose();
+                    target = next;
+                    continue;
+                }
+            }
+
+            return (request, response, target);
+        }
+    }
+
+    /// <summary>True when the failure happened while connecting (before any request bytes went out).</summary>
+    private static bool IsConnectFailure(HttpRequestException ex) =>
+        ex.HttpRequestError is HttpRequestError.ConnectionError
+            or HttpRequestError.NameResolutionError
+            or HttpRequestError.SecureConnectionError
+            or HttpRequestError.ProxyTunnelError;
+
+    /// <summary>
     /// The request sent upstream, built fresh rather than copied from the client's.
     /// </summary>
     /// <remarks>
@@ -1136,13 +1234,13 @@ internal sealed class LocalPawRelay : IAsyncDisposable
         HttpListenerContext context,
         RelayRoute route,
         byte[] body,
-        string jwt,
+        RelayTarget target,
         long? group)
     {
         // The query string travels for Messages: Claude Code calls /v1/messages?beta=true,
         // and dropping it changes which API surface answers.
         string query = route.Protocol == RelayProtocol.Messages ? context.Request.Url?.Query ?? string.Empty : string.Empty;
-        var request = new HttpRequestMessage(HttpMethod.Post, _upstream + route.UpstreamPath + query)
+        var request = new HttpRequestMessage(HttpMethod.Post, target.BaseUrl.TrimEnd('/') + route.UpstreamPath + query)
         {
             Content = new ByteArrayContent(body),
         };
@@ -1151,7 +1249,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
 
         // Replaced, not appended: forwarding the local token upstream is the easiest
         // mistake to make on this path.
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", jwt);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", target.Bearer);
         request.Headers.Add(
             GroupHeader,
             group?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "auto");

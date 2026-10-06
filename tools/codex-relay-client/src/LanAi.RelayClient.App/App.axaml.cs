@@ -218,7 +218,12 @@ public partial class App : Application
                 localProxyUsage.Add(usage);
                 Avalonia.Threading.Dispatcher.UIThread.Post(() => dashboardForRelay?.LocalProxy.RefreshUsage());
             },
-            codexCatalogSource: new CodexBundledCatalogSource());
+            codexCatalogSource: new CodexBundledCatalogSource(),
+            // The server decides, per user, whether requests go to it or to a relay node (a ticket on that node's address).
+            relayTargets: new RelayAssignmentClient(
+                new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(15) },
+                ClientOptions.ServerAddress,
+                session.GetAccessTokenAsync));
         // Claude Code's settings.json and the editor's own settings, put back on exit.
         var pluginBinding = new ClaudePluginBinding(
             new ClaudeCodeSettingsWriter(Path.Combine(AppPaths.PluginConfigRoot, "claude-settings-journal.json")),
