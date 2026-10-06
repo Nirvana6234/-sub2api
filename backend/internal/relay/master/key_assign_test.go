@@ -470,3 +470,32 @@ func TestRuntimeLogQueryMarksOfflineNodes(t *testing.T) {
 	_, err = h.runtime.QueryNodeLogs(ctx, []int64{999}, &relayv1.LogQuery{Kind: "app"})
 	require.ErrorIs(t, err, master.ErrNodeNotFound)
 }
+
+// 排空（设计 10.4）：不再分配新用户和新 Key（已激活的才分配），可以取消；状态不对时 409；都记审计。
+func TestDrainStopsAssignmentAndCanBeUndone(t *testing.T) {
+	ctx := context.Background()
+	h := newKeyAdminHarness(t, 0)
+	a, b := h.nodes[0].ID, h.nodes[1].ID
+
+	require.NoError(t, h.runtime.DrainNode(ctx, a, 1))
+	got, err := h.store.GetByID(ctx, a)
+	require.NoError(t, err)
+	require.Equal(t, master.NodeDraining, got.Status)
+	require.ErrorIs(t, h.runtime.DrainNode(ctx, a, 1), master.ErrStatusConflict, "already draining")
+	require.ErrorIs(t, h.runtime.UndrainNode(ctx, b, 1), master.ErrStatusConflict, "only a draining node can be restored")
+
+	// 排空中的节点不接新 Key。
+	_, err = h.runtime.MoveKeys(ctx, 1, []int64{}, a)
+	require.ErrorIs(t, err, master.ErrKeyTargetUnavailable)
+
+	require.NoError(t, h.runtime.UndrainNode(ctx, a, 1))
+	got, err = h.store.GetByID(ctx, a)
+	require.NoError(t, err)
+	require.Equal(t, master.NodeActive, got.Status)
+	actions := map[string]int{}
+	for _, e := range h.store.Audits() {
+		actions[e.Action]++
+	}
+	require.Equal(t, 1, actions[master.AuditDrained])
+	require.Equal(t, 1, actions[master.AuditUndrained])
+}

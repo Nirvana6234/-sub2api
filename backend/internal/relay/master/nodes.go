@@ -76,6 +76,8 @@ const (
 	AuditPendingPurged     = "pending_purged"
 	AuditAddressMoved      = "address_moved"
 	AuditNodeReplaced      = "node_replaced"
+	AuditDrained           = "drained"
+	AuditUndrained         = "undrained"
 )
 
 // NodesOptions 配置节点管理。零值字段取设计 19 的默认值。
@@ -569,6 +571,33 @@ func (n *Nodes) Disable(ctx context.Context, nodeID, actor int64) error {
 	}
 	n.afterRevoke(nodeID, NodeDisabled, serials)
 	return n.store.Audit(ctx, AuditEntry{NodeID: nodeID, ActorUserID: actor, Action: AuditDisabled, Detail: map[string]any{"revoked": serials}})
+}
+
+// Drain 排空（设计 10.4）：不再分配新用户和新 Key，小白端下次询问时换走；进行中的请求照常结束，节点仍可通信、发完队列、退回额度。
+// 不改解析、不断连接；排空最长等待时间到了从节点自己关掉对外服务（nodegw）。
+func (n *Nodes) Drain(ctx context.Context, nodeID, actor int64) error {
+	ok, err := n.store.SetStatus(ctx, nodeID, []NodeStatus{NodeActive}, NodeDraining)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrStatusConflict
+	}
+	n.setStatus(nodeID, NodeDraining)
+	return n.store.Audit(ctx, AuditEntry{NodeID: nodeID, ActorUserID: actor, Action: AuditDrained})
+}
+
+// Undrain 取消排空：回到已激活，恢复分配。
+func (n *Nodes) Undrain(ctx context.Context, nodeID, actor int64) error {
+	ok, err := n.store.SetStatus(ctx, nodeID, []NodeStatus{NodeDraining}, NodeActive)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrStatusConflict
+	}
+	n.setStatus(nodeID, NodeActive)
+	return n.store.Audit(ctx, AuditEntry{NodeID: nodeID, ActorUserID: actor, Action: AuditUndrained})
 }
 
 // Enable 让停用的节点回到待激活，管理员核对指纹后重新激活。

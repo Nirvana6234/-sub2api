@@ -920,6 +920,16 @@ func (r *Runtime) Quotas() *Quotas {
 	return rr.quotas
 }
 
+// DrainNode 排空一台节点（设计 10.4）；UndrainNode 取消排空。排空前先看 KeyAssignmentSummary / UserAssignmentSummary 里的影响数量。
+func (r *Runtime) DrainNode(ctx context.Context, nodeID, actor int64) error {
+	return r.nodeOp(func(n *Nodes) error { return n.Drain(ctx, nodeID, actor) })
+}
+
+// UndrainNode 取消排空。
+func (r *Runtime) UndrainNode(ctx context.Context, nodeID, actor int64) error {
+	return r.nodeOp(func(n *Nodes) error { return n.Undrain(ctx, nodeID, actor) })
+}
+
 // EnableNode 让停用的节点回到待激活。
 func (r *Runtime) EnableNode(ctx context.Context, nodeID, actor int64) error {
 	return r.nodeOp(func(n *Nodes) error { return n.Enable(ctx, nodeID, actor) })

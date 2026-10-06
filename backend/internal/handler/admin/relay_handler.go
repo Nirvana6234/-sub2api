@@ -297,6 +297,18 @@ func (h *RelayHandler) CheckNodeDomain(c *gin.Context) {
 	response.Success(c, check)
 }
 
+// DrainNode 排空：不再分配新用户和新 Key，进行中的请求照常结束；排空最长等 30 分钟，到时从节点关掉对外服务。
+// POST /api/v1/admin/relay/nodes/:id/drain
+func (h *RelayHandler) DrainNode(c *gin.Context) {
+	h.nodeAction(c, func(c *gin.Context, id, actor int64) error { return h.runtime.DrainNode(c.Request.Context(), id, actor) })
+}
+
+// UndrainNode 取消排空，恢复分配。
+// POST /api/v1/admin/relay/nodes/:id/undrain
+func (h *RelayHandler) UndrainNode(c *gin.Context) {
+	h.nodeAction(c, func(c *gin.Context, id, actor int64) error { return h.runtime.UndrainNode(c.Request.Context(), id, actor) })
+}
+
 // nodeAction 处理只需要节点 ID 和操作人的节点操作。
 func (h *RelayHandler) nodeAction(c *gin.Context, op func(c *gin.Context, id, actor int64) error) {
 	id, ok := relayNodeID(c)

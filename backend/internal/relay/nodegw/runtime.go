@@ -318,6 +318,27 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 		go func() { errc <- srv.ListenAndServeTLS("", "") }()
 	}
 	slog.Info("relay node serving", "addr", srv.Addr, "tls", !rc.NodeTLSDisabled, "node_id", id.NodeID())
+	// 排空（设计 10.4）：主节点说这台在排空，最长等 drain_max_wait_minutes（默认 30），到时关掉对外服务、断开剩余连接。
+	go func() {
+		var watcher drainWatcher
+		t := time.NewTicker(10 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-runCtx.Done():
+				return
+			case <-t.C:
+				maxWait := 30 * time.Minute
+				if nc, ok := cache.Node(); ok && nc.General.DrainMaxWaitMinutes > 0 {
+					maxWait = time.Duration(nc.General.DrainMaxWaitMinutes) * time.Minute
+				}
+				if watcher.observe(heartbeater.Draining(), time.Now(), maxWait) {
+					slog.Warn("relay node drain wait is over: closing the public listener and remaining connections")
+					_ = srv.Close()
+				}
+			}
+		}
+	}()
 
 	select {
 	case err := <-errc:
