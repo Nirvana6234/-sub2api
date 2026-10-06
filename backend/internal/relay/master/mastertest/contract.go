@@ -113,6 +113,44 @@ func Run(t *testing.T, h Harness) {
 		require.ErrorIs(t, s.Activate(ctx, b.ID, master.Activation{PublicDomain: "RELAY1.example.com"}), master.ErrDomainTaken)
 	})
 
+	t.Run("replace node moves the domain to the new machine", func(t *testing.T) {
+		s := h.New(t)
+		old, err := s.CreatePending(ctx, newNode("old"), 20)
+		require.NoError(t, err)
+		fresh, err := s.CreatePending(ctx, newNode("new"), 20)
+		require.NoError(t, err)
+		bystander, err := s.CreatePending(ctx, newNode("by"), 20)
+		require.NoError(t, err)
+		act := master.Activation{Name: "tokyo-1", PublicDomain: "relay1.example.com", BandwidthLimitMbps: 500, Region: "jp", ActorUserID: 7, At: time.Now().UTC().Truncate(time.Millisecond)}
+		require.NoError(t, s.Activate(ctx, old.ID, act))
+
+		// 旧节点必须先停用，新节点必须是待激活；条件不符时什么都不改。
+		require.ErrorIs(t, s.ReplaceNode(ctx, old.ID, fresh.ID, act), master.ErrStatusConflict)
+		_, err = s.SetStatus(ctx, old.ID, []master.NodeStatus{master.NodeActive}, master.NodeDisabled)
+		require.NoError(t, err)
+		require.ErrorIs(t, s.ReplaceNode(ctx, old.ID, 987654, act), master.ErrNodeNotFound)
+		require.ErrorIs(t, s.ReplaceNode(ctx, 987654, fresh.ID, act), master.ErrNodeNotFound)
+		_, err = s.SetStatus(ctx, bystander.ID, []master.NodeStatus{master.NodePending}, master.NodeRejected)
+		require.NoError(t, err)
+		require.ErrorIs(t, s.ReplaceNode(ctx, old.ID, bystander.ID, act), master.ErrStatusConflict)
+		got, err := s.GetByID(ctx, old.ID)
+		require.NoError(t, err)
+		require.Equal(t, "relay1.example.com", got.PublicDomain, "a refused replacement leaves the old node alone")
+
+		require.NoError(t, s.ReplaceNode(ctx, old.ID, fresh.ID, act))
+		got, err = s.GetByID(ctx, old.ID)
+		require.NoError(t, err)
+		require.Equal(t, master.NodeDisabled, got.Status)
+		require.Empty(t, got.PublicDomain, "the domain left the old node")
+		got, err = s.GetByID(ctx, fresh.ID)
+		require.NoError(t, err)
+		require.Equal(t, master.NodeActive, got.Status)
+		require.Equal(t, "relay1.example.com", got.PublicDomain)
+		require.Equal(t, "tokyo-1", got.Name)
+		require.Equal(t, 500, got.BandwidthLimitMbps)
+		require.EqualValues(t, 7, *got.ActivatedBy)
+	})
+
 	t.Run("registration, keys and multi-ip updates", func(t *testing.T) {
 		s := h.New(t)
 		n, err := s.CreatePending(ctx, newNode("u"), 20)

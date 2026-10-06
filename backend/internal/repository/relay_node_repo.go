@@ -208,6 +208,52 @@ func (r *relayNodeRepository) Activate(ctx context.Context, id int64, a master.A
 	return nil
 }
 
+func (r *relayNodeRepository) ReplaceNode(ctx context.Context, fromID, toID int64, a master.Activation) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	// 先清旧节点的域名（域名全局唯一），再激活新节点；任何一步不符合就整个回滚。
+	res, err := tx.ExecContext(ctx, `
+		UPDATE relay_nodes SET public_domain = NULL, updated_at = NOW()
+		WHERE id = $1 AND deleted_at IS NULL AND status = 'disabled'`, fromID)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		if _, err := r.GetByID(ctx, fromID); err != nil {
+			return err
+		}
+		return master.ErrStatusConflict
+	}
+	res, err = tx.ExecContext(ctx, `
+		UPDATE relay_nodes SET status = 'active',
+			name = CASE WHEN $2 = '' THEN name ELSE $2 END,
+			public_domain = $3, bandwidth_limit_mbps = $4, region = $5,
+			activated_at = $6, activated_by = $7, updated_at = NOW()
+		WHERE id = $1 AND deleted_at IS NULL AND status = 'pending'`,
+		toID, a.Name, a.PublicDomain, a.BandwidthLimitMbps, a.Region, a.At, nullableActor(a.ActorUserID))
+	if err != nil {
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+			return master.ErrDomainTaken
+		}
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		if _, err := r.GetByID(ctx, toID); err != nil {
+			return err
+		}
+		return master.ErrStatusConflict
+	}
+	return tx.Commit()
+}
+
 func (r *relayNodeRepository) SetAllowMultiIP(ctx context.Context, id int64, allow bool) error {
 	res, err := r.db.ExecContext(ctx, `UPDATE relay_nodes SET allow_multi_ip = $2, updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL`, id, allow)
 	return requireRelayRow(res, err)

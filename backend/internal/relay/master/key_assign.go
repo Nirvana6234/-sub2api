@@ -53,7 +53,6 @@ type KeyAssigner struct {
 	mu       sync.Mutex
 	stats    map[int64]service.RelayKeyStat
 	statsAt  time.Time
-	statsErr error
 }
 
 // NewKeyAssigner 创建分配器。

@@ -147,6 +147,31 @@ func (s *MemoryStore) Activate(_ context.Context, id int64, a Activation) error 
 	return nil
 }
 
+func (s *MemoryStore) ReplaceNode(_ context.Context, fromID, toID int64, a Activation) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	from, ok := s.nodes[fromID]
+	if !ok {
+		return ErrNodeNotFound
+	}
+	to, ok := s.nodes[toID]
+	if !ok {
+		return ErrNodeNotFound
+	}
+	if from.Status != NodeDisabled || to.Status != NodePending {
+		return ErrStatusConflict
+	}
+	from.PublicDomain = ""
+	to.Status = NodeActive
+	if a.Name != "" {
+		to.Name = a.Name
+	}
+	to.PublicDomain, to.BandwidthLimitMbps, to.Region = a.PublicDomain, a.BandwidthLimitMbps, a.Region
+	at, actor := a.At, a.ActorUserID
+	to.ActivatedAt, to.ActivatedBy = &at, &actor
+	return nil
+}
+
 func (s *MemoryStore) SetAllowMultiIP(_ context.Context, id int64, allow bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

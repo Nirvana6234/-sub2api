@@ -406,3 +406,44 @@ func (r *memKeyRepo) GetByKeyForAuth(_ context.Context, key string) (*service.AP
 	}
 	return nil, service.ErrAPIKeyNotFound
 }
+
+// 换机器（设计 11.6）：新机器注册、核对指纹后，旧节点的域名和分到它的 Key 转给新节点，域名不变所以 Key 不记"地址已变更"。
+func TestRuntimeReplacesANodeKeepingDomainAndKeys(t *testing.T) {
+	ctx := context.Background()
+	h := newKeyAdminHarness(t, 10, apiKey(1, nil), apiKey(2, nil), apiKey(3, nil))
+	oldNode := h.nodes[0]
+	_, err := h.runtime.MoveKeys(ctx, 1, []int64{1, 2}, oldNode.ID)
+	require.NoError(t, err)
+	other := h.nodes[1].ID
+	_, err = h.runtime.MoveKeys(ctx, 1, []int64{3}, other)
+	require.NoError(t, err)
+	h.repo.keys[1].RelayNodeChangedAt, h.repo.keys[2].RelayNodeChangedAt = nil, nil
+
+	fresh, err := h.store.CreatePending(ctx, &master.Node{IdentityFingerprint: "fp-new-machine", IdentityPublicKey: []byte{1}}, 20)
+	require.NoError(t, err)
+
+	// 指纹不对：什么都不动，旧节点也不会被停用。
+	_, err = h.runtime.ReplaceNode(ctx, 1, oldNode.ID, fresh.ID, "not-the-fingerprint")
+	require.ErrorIs(t, err, master.ErrFingerprintMismatch)
+	still, err := h.store.GetByID(ctx, oldNode.ID)
+	require.NoError(t, err)
+	require.Equal(t, master.NodeActive, still.Status)
+	require.Equal(t, oldNode.ID, *h.repo.node(1))
+
+	moved, err := h.runtime.ReplaceNode(ctx, 1, oldNode.ID, fresh.ID, "fp-new-machine")
+	require.NoError(t, err)
+	require.Equal(t, 2, moved)
+	require.Equal(t, fresh.ID, *h.repo.node(1))
+	require.Equal(t, fresh.ID, *h.repo.node(2))
+	require.Equal(t, other, *h.repo.node(3), "keys of other nodes stay put")
+	require.Nil(t, h.repo.keys[1].RelayNodeChangedAt, "the address did not change")
+
+	got, err := h.store.GetByID(ctx, fresh.ID)
+	require.NoError(t, err)
+	require.Equal(t, master.NodeActive, got.Status)
+	require.Equal(t, "a.example.com", got.PublicDomain)
+	oldGot, err := h.store.GetByID(ctx, oldNode.ID)
+	require.NoError(t, err)
+	require.Equal(t, master.NodeDisabled, oldGot.Status)
+	require.Empty(t, oldGot.PublicDomain)
+}

@@ -159,6 +159,49 @@ func (r *Runtime) MoveNodeKeys(ctx context.Context, actor, from int64, to *int64
 	return moved, left, nil
 }
 
+// ReplaceNode 换机器（设计 11.6）：旧节点停用（还在服务就先停，额度作废放回）、域名和名称等转给新节点并激活、
+// 分到旧节点的 Key 全部转给新节点——域名不变，用户不用改地址，所以这些 Key 不记"地址已变更"。返回转移的 Key 数。
+func (r *Runtime) ReplaceNode(ctx context.Context, actor, fromID, toID int64, fingerprint string) (int, error) {
+	if _, err := r.keyAssigner(); err != nil {
+		return 0, err
+	}
+	if err := r.nodeOp(func(n *Nodes) error { return n.CheckReplace(ctx, fromID, toID, fingerprint) }); err != nil {
+		return 0, err
+	}
+	from, err := r.deps.Store.GetByID(ctx, fromID)
+	if err != nil {
+		return 0, err
+	}
+	if from.Status.Serving() {
+		if err := r.DisableNode(ctx, fromID, actor); err != nil {
+			return 0, err
+		}
+	}
+	if err := r.nodeOp(func(n *Nodes) error { return n.Replace(ctx, fromID, toID, fingerprint, actor) }); err != nil {
+		return 0, err
+	}
+	moved := 0
+	filter := service.RelayKeyFilter{NodeID: fromID}
+	var after int64
+	for {
+		ids, err := r.deps.APIKeys.ListRelayKeyIDs(ctx, filter, after, keyBatchSize)
+		if err != nil {
+			return moved, err
+		}
+		if len(ids) == 0 {
+			break
+		}
+		after = ids[len(ids)-1]
+		n, err := r.deps.APIKeys.AssignRelayNode(ctx, ids, toID, false)
+		if err != nil {
+			return moved, err
+		}
+		moved += n
+	}
+	r.audit(ctx, actor, AuditKeysReassigned, map[string]any{"from_node": fromID, "to_node": toID, "moved": moved, "reason": "node_replaced"})
+	return moved, nil
+}
+
 // AssignUnassignedKeys 给所有还没分配节点的 Key 分配（设计 10.7 第 1 步：上线时批量分配）。
 // 第一次分配不记"分配改变时间"（Key 页面不提示地址变更）。返回分配数和没能分配的数量。
 func (r *Runtime) AssignUnassignedKeys(ctx context.Context, actor int64) (assigned, left int, err error) {

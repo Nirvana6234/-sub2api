@@ -63,6 +63,7 @@ const (
 	AuditMultiIPChanged    = "allow_multi_ip_changed"
 	AuditPendingPurged     = "pending_purged"
 	AuditAddressMoved      = "address_moved"
+	AuditNodeReplaced      = "node_replaced"
 )
 
 // NodesOptions 配置节点管理。零值字段取设计 19 的默认值。
@@ -456,6 +457,50 @@ func (n *Nodes) Activate(ctx context.Context, nodeID int64, confirmFingerprint s
 	return n.store.Audit(ctx, AuditEntry{NodeID: nodeID, ActorUserID: a.ActorUserID, Action: AuditActivated, Detail: map[string]any{
 		"fingerprint": node.IdentityFingerprint, "public_domain": a.PublicDomain, "name": a.Name,
 	}})
+}
+
+// Replace 换机器（设计 11.6）：新机器按新节点注册后，管理员核对它的指纹，把已停用的旧节点的域名、名称、带宽、区域转给它并激活。
+// 旧节点保留为停用状态（域名清空）。Key 的转移由调用方接着做（Runtime.ReplaceNode）。
+func (n *Nodes) Replace(ctx context.Context, fromID, toID int64, confirmFingerprint string, actor int64) error {
+	from, to, err := n.checkReplace(ctx, fromID, toID, confirmFingerprint, false)
+	if err != nil {
+		return err
+	}
+	a := Activation{Name: from.Name, PublicDomain: from.PublicDomain, BandwidthLimitMbps: from.BandwidthLimitMbps, Region: from.Region, ActorUserID: actor, At: n.now()}
+	if err := n.store.ReplaceNode(ctx, fromID, toID, a); err != nil {
+		return err
+	}
+	n.setStatus(toID, NodeActive)
+	return n.store.Audit(ctx, AuditEntry{NodeID: toID, ActorUserID: actor, Action: AuditNodeReplaced, Detail: map[string]any{
+		"replaced_node": fromID, "fingerprint": to.IdentityFingerprint, "public_domain": a.PublicDomain,
+	}})
+}
+
+// CheckReplace 在停用旧节点之前核对换机器的条件（指纹错了不能先把旧节点停掉）：旧节点在用或已停用、有域名；新节点待激活且指纹对得上。
+func (n *Nodes) CheckReplace(ctx context.Context, fromID, toID int64, confirmFingerprint string) error {
+	_, _, err := n.checkReplace(ctx, fromID, toID, confirmFingerprint, true)
+	return err
+}
+
+// checkReplace：serving 为 true 时旧节点可以还在服务（调用方接着会停用它），否则必须已停用。
+func (n *Nodes) checkReplace(ctx context.Context, fromID, toID int64, confirmFingerprint string, serving bool) (from, to *Node, err error) {
+	if from, err = n.store.GetByID(ctx, fromID); err != nil {
+		return nil, nil, err
+	}
+	if to, err = n.store.GetByID(ctx, toID); err != nil {
+		return nil, nil, err
+	}
+	fromOK := from.Status == NodeDisabled || (serving && from.Status.Serving())
+	if !fromOK || to.Status != NodePending {
+		return nil, nil, ErrStatusConflict
+	}
+	if transport.NormalizeFingerprint(confirmFingerprint) != to.IdentityFingerprint {
+		return nil, nil, ErrFingerprintMismatch
+	}
+	if from.PublicDomain == "" {
+		return nil, nil, ErrDomainRequired
+	}
+	return from, to, nil
 }
 
 // Reject 拒绝待激活节点：这把长期密钥被拉黑，同一台机器要换密钥重新注册。

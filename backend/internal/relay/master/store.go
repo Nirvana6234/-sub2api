@@ -123,6 +123,9 @@ type NodeStore interface {
 	List(ctx context.Context) ([]*Node, error)
 	SetStatus(ctx context.Context, id int64, from []NodeStatus, to NodeStatus) (bool, error)
 	Activate(ctx context.Context, id int64, a Activation) error
+	// ReplaceNode 换机器（设计 11.6）：把已停用的 from 节点的对外域名转给待激活的 to 节点并激活 to，
+	// 同一个事务里清掉 from 的域名（域名全局唯一）。from 不是停用状态、to 不是待激活时返回 ErrStatusConflict。
+	ReplaceNode(ctx context.Context, fromID, toID int64, a Activation) error
 	SetAllowMultiIP(ctx context.Context, id int64, allow bool) error
 	SetEncryptionKey(ctx context.Context, id int64, key []byte) error
 	// TouchSeen 记录最近一次看到节点的时间和 IP，返回 IP 是否和上次不同。

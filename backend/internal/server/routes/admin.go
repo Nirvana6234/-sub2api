@@ -973,6 +973,7 @@ func registerRelayRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth
 		relay.POST("/api-keys/assign-unassigned", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.AssignUnassignedKeys)
 		relay.POST("/api-keys/move", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.MoveKeys)
 		relay.POST("/nodes/:id/move-keys", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.MoveNodeKeys)
+		relay.POST("/nodes/:id/replace", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.ReplaceNode)
 
 		relay.GET("/keys/:purpose", h.Admin.Relay.ListKeys)
 		relay.POST("/keys/:purpose/stage", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.StageKey)

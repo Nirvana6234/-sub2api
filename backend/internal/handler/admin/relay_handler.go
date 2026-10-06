@@ -462,6 +462,36 @@ func (h *RelayHandler) RetireKey(c *gin.Context) {
 	response.Success(c, nil)
 }
 
+// ReplaceNodeRequest：换机器时新节点的 ID 和它在本机打印的指纹。
+type ReplaceNodeRequest struct {
+	NewNodeID   int64  `json:"new_node_id" binding:"required,min=1"`
+	Fingerprint string `json:"fingerprint" binding:"required"`
+}
+
+// ReplaceNode 换机器：把已停用或在用的旧节点的域名、名称和分到它的 Key 转给新注册的节点并激活新节点（域名不变，用户不用改地址）。
+// POST /api/v1/admin/relay/nodes/:id/replace
+func (h *RelayHandler) ReplaceNode(c *gin.Context) {
+	id, ok := relayNodeID(c)
+	if !ok {
+		return
+	}
+	var req ReplaceNodeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	actor, ok := relayActor(c)
+	if !ok {
+		return
+	}
+	moved, err := h.runtime.ReplaceNode(c.Request.Context(), actor, id, req.NewNodeID, req.Fingerprint)
+	if err != nil {
+		relayError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"moved_keys": moved})
+}
+
 // ---- API Key 的节点分配（设计 10.2、10.7、10.8）----
 
 // KeyAssignmentSummary 返回各节点上分配的 Key 数（改比例、停用节点前看影响）。
