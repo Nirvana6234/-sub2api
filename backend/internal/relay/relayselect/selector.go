@@ -305,6 +305,19 @@ func (s *selector) takeSelection(nodeID int64, id string) *selectionRecord {
 	return sel
 }
 
+// NodeHeartbeat 实现 master.HeartbeatAware：心跳里带着这台节点进行中的选号 ID，对应请求的占用时间重新算
+// （长请求、长流不会因为超过 holdLimit 被当成泄漏放掉，设计 11.4）。
+func (s *selector) NodeHeartbeat(nodeID int64, selectionIDs []string) {
+	now := s.now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, id := range selectionIDs {
+		if sel, ok := s.selections[id]; ok && sel.nodeID == nodeID {
+			sel.request.lastSeen = now
+		}
+	}
+}
+
 func (s *selector) lookupSelection(nodeID int64, id string) *selectionRecord {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -39,8 +39,8 @@ type KeyAssignerDeps struct {
 	Config func(ctx context.Context) GeneralConfig
 	// Stats 返回每台节点上的 Key 数；nil 时按没有。
 	Stats KeyStatsFunc
-	// Load 返回节点的负载（0~1，超过 1 也行）；0 号是主节点；nil 时都是 0。
-	Load func(nodeID int64) float64
+	// Load 返回节点的负载（0~1，超过 1 也行）；节点 0 是主节点（带宽上限为 0）；nil 时都是 0。
+	Load func(nodeID int64, bandwidthMbps int) float64
 	// Rand 返回 [0,1) 的随机数；nil 用 math/rand。
 	Rand func() float64
 	Now  func() time.Time
@@ -102,11 +102,15 @@ func (a *KeyAssigner) Pick(ctx context.Context, exclude map[int64]bool) (int64, 
 		}
 	}
 	threshold := float64(cfg.LoadThresholdPercent) / 100
+	bandwidth := map[int64]int{}
+	for _, n := range nodes {
+		bandwidth[n.ID] = n.BandwidthLimitMbps
+	}
 	load := func(id int64) float64 {
 		if a.deps.Load == nil {
 			return 0
 		}
-		return a.deps.Load(id)
+		return a.deps.Load(id, bandwidth[id])
 	}
 	masterOK := ratio > 0 && !exclude[0]
 	masterUnderLoad := masterOK && load(0) <= threshold

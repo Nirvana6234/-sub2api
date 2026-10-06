@@ -33,6 +33,9 @@ service RelayEnrollment {
 // 控制连接：选号、上游错误决策、额度、Key 查询等同步小消息（WP6、WP7、WP11）。
 service RelayControl {
   rpc Ping(PingRequest) returns (PingResponse);
+  // Heartbeat 心跳（设计 11.4）：每 5 秒一次，带本机的负载与计数；连续 15 秒收不到主节点把这台标为离线。
+  // 回复带主节点时间（从节点据此测时钟偏差）。主节点按连接证书认定是哪台，不信报文里的任何节点标识。
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
   // FetchConfig 拉取本节点的配置快照（启动、重连、纪元变化、版本落后时，设计 6.2）。
   rpc FetchConfig(FetchConfigRequest) returns (ConfigSnapshot);
 
@@ -231,6 +234,60 @@ message CertificateResponse {
 
 message PingRequest {
   bytes payload = 1;
+}
+
+// 心跳（设计 11.4）。速率是上一个心跳间隔内的实测值；"1 分钟"字段是滑动的近 1 分钟。
+message HeartbeatRequest {
+  string program_version = 1;
+  string config_version = 2;
+  // 进程启动时间。
+  int64 started_at_unix_ms = 3;
+  // 发出时的本机时间。
+  int64 sent_at_unix_ms = 4;
+  // 网卡实测收发速率（字节 / 秒，含 API Key 用户的流量）。
+  uint64 rx_bytes_per_sec = 5;
+  uint64 tx_bytes_per_sec = 6;
+  // 客户端连接数（含流式响应、WebSocket）。
+  int32 client_connections = 7;
+  // 进行中的请求数。
+  int32 inflight_requests = 8;
+  // 进行中的选号 ID（主节点据此续期占着的槽位，长请求不会被当成泄漏）。
+  repeated string inflight_selection_ids = 9;
+  int32 active_users = 10;
+  int32 active_keys = 11;
+  // 本机锁定额度总额（10^-8 美元整数，与额度租约同单位）。
+  int64 reserved_total_micros = 12;
+  // 本地扣费队列积压条数、最早一条的时间。
+  int32 billing_backlog = 13;
+  int64 billing_oldest_at_unix_ms = 14;
+  // 日志发送积压和丢弃条数（本机日志留在本机，积压只是本机写盘的队列）。
+  int32 log_backlog = 15;
+  int64 log_dropped = 16;
+  int32 requests_1m = 17;
+  int32 errors_1m = 18;
+  float cpu_percent = 19;
+  uint64 memory_bytes = 20;
+  uint64 disk_free_bytes = 21;
+  // 本次启动以来累计写进本地扣费队列的记录数（主节点对照自己入账的条数检测丢失，设计 5.4）。
+  uint64 usage_records_enqueued_total = 22;
+  // 近 1 分钟按（级别, 组件）汇总的日志条数、按（错误类型, 状态码）汇总的错误条数（告警用，不含内容）。
+  repeated CountBucket log_counts = 23;
+  repeated CountBucket error_counts = 24;
+}
+
+// CountBucket 是按两个标签汇总的条数。
+message CountBucket {
+  string a = 1;
+  string b = 2;
+  int32 count = 3;
+}
+
+message HeartbeatResponse {
+  int64 master_time_unix_ms = 1;
+  // 主节点当前给这台的配置版本（与手里的不同时从节点去拉，和 ConfigChanged 推送互为兜底）。
+  string config_version = 2;
+  // 这台在排空中：不会再被分配新用户和新 Key（设计 10.4）。
+  bool draining = 3;
 }
 
 message PingResponse {

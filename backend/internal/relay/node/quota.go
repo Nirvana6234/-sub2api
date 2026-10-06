@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -380,6 +381,22 @@ func (q *LocalQuota) Held() []*relayv1.HeldLease {
 		out = append(out, &relayv1.HeldLease{LeaseId: id, UserId: k.UserID})
 	}
 	return out
+}
+
+// ReservedTotal 返回本机锁着、还没用掉的余额总额（余额维度，10^-8 美元整数；心跳用）和有额度的用户数。
+func (q *LocalQuota) ReservedTotal() (total int64, users int) {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+	seen := map[int64]struct{}{}
+	for k, e := range q.entries {
+		if r := e.remaining.Load(); r > 0 {
+			seen[k.UserID] = struct{}{}
+			if k.Dimension == service.QuotaDimBalance {
+				total += r
+			}
+		}
+	}
+	return total, len(seen)
 }
 
 // Reset 清空（进程重启等价：内存里的额度没了，重连核对时主节点把没上报的全部放回）。

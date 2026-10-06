@@ -453,3 +453,30 @@ func TestTicketRevocationsReachTheNode(t *testing.T) {
 	require.Eventually(t, func() bool { return list.Revoked(42, at.Add(-time.Minute), time.Now()) }, 5*time.Second, 10*time.Millisecond)
 	require.False(t, list.Revoked(43, at.Add(-time.Minute), time.Now()))
 }
+
+// 心跳（设计 11.4）：从节点按证书认定身份发心跳，主节点记下并回主节点时间；从节点据此测时钟偏差、知道自己在排空中。
+func TestHeartbeatReachesTheMasterAndMeasuresTheClock(t *testing.T) {
+	m := startMaster(t)
+	n := startNode(t, m)
+	clock := time.Now()
+	hbs := master.NewHeartbeats(master.HeartbeatsOptions{Now: func() time.Time { return clock }})
+	draining := false
+	m.control.AttachHeartbeats(hbs, func(context.Context, int64) (string, bool) { return "v-test", draining })
+
+	beater := node.NewHeartbeater(n.client, func() *relayv1.HeartbeatRequest {
+		return &relayv1.HeartbeatRequest{ProgramVersion: "9.9", StartedAtUnixMs: 42, ClientConnections: 3, RxBytesPerSec: 1000}
+	}, 0)
+	require.True(t, beater.ClockHealthy(), "not measured yet counts as healthy")
+	require.NoError(t, beater.Beat(context.Background()))
+	require.True(t, hbs.Online(m.nodeID), "the master recorded the node it knows from the certificate")
+	health := hbs.Health(m.nodeID, 0)
+	require.Equal(t, "9.9", health.Beat.GetProgramVersion())
+	require.EqualValues(t, 3, health.Beat.GetClientConnections())
+	require.Less(t, beater.Skew(), 2*time.Second, "same machine: no clock difference")
+	require.True(t, beater.ClockHealthy())
+	require.False(t, beater.Draining())
+
+	draining = true
+	require.NoError(t, beater.Beat(context.Background()))
+	require.True(t, beater.Draining())
+}

@@ -304,6 +304,7 @@ var RelayEnrollment_ServiceDesc = grpc.ServiceDesc{
 
 const (
 	RelayControl_Ping_FullMethodName                  = "/sub2api.relay.v1.RelayControl/Ping"
+	RelayControl_Heartbeat_FullMethodName             = "/sub2api.relay.v1.RelayControl/Heartbeat"
 	RelayControl_FetchConfig_FullMethodName           = "/sub2api.relay.v1.RelayControl/FetchConfig"
 	RelayControl_ReleaseQuota_FullMethodName          = "/sub2api.relay.v1.RelayControl/ReleaseQuota"
 	RelayControl_RenewLeases_FullMethodName           = "/sub2api.relay.v1.RelayControl/RenewLeases"
@@ -338,6 +339,9 @@ const (
 // 控制连接：选号、上游错误决策、额度、Key 查询等同步小消息（WP6、WP7、WP11）。
 type RelayControlClient interface {
 	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
+	// Heartbeat 心跳（设计 11.4）：每 5 秒一次，带本机的负载与计数；连续 15 秒收不到主节点把这台标为离线。
+	// 回复带主节点时间（从节点据此测时钟偏差）。主节点按连接证书认定是哪台，不信报文里的任何节点标识。
+	Heartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error)
 	// FetchConfig 拉取本节点的配置快照（启动、重连、纪元变化、版本落后时，设计 6.2）。
 	FetchConfig(ctx context.Context, in *FetchConfigRequest, opts ...grpc.CallOption) (*ConfigSnapshot, error)
 	// ---- 额度（设计第 4 节）。申请随选号一起（WP7），这里是退回、续期、核对、收回确认。----
@@ -435,6 +439,16 @@ func (c *relayControlClient) Ping(ctx context.Context, in *PingRequest, opts ...
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PingResponse)
 	err := c.cc.Invoke(ctx, RelayControl_Ping_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *relayControlClient) Heartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(HeartbeatResponse)
+	err := c.cc.Invoke(ctx, RelayControl_Heartbeat_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -698,6 +712,9 @@ func (c *relayControlClient) PawResolve(ctx context.Context, in *PawResolveReque
 // 控制连接：选号、上游错误决策、额度、Key 查询等同步小消息（WP6、WP7、WP11）。
 type RelayControlServer interface {
 	Ping(context.Context, *PingRequest) (*PingResponse, error)
+	// Heartbeat 心跳（设计 11.4）：每 5 秒一次，带本机的负载与计数；连续 15 秒收不到主节点把这台标为离线。
+	// 回复带主节点时间（从节点据此测时钟偏差）。主节点按连接证书认定是哪台，不信报文里的任何节点标识。
+	Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error)
 	// FetchConfig 拉取本节点的配置快照（启动、重连、纪元变化、版本落后时，设计 6.2）。
 	FetchConfig(context.Context, *FetchConfigRequest) (*ConfigSnapshot, error)
 	// ---- 额度（设计第 4 节）。申请随选号一起（WP7），这里是退回、续期、核对、收回确认。----
@@ -793,6 +810,9 @@ type UnimplementedRelayControlServer struct{}
 
 func (UnimplementedRelayControlServer) Ping(context.Context, *PingRequest) (*PingResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Ping not implemented")
+}
+func (UnimplementedRelayControlServer) Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Heartbeat not implemented")
 }
 func (UnimplementedRelayControlServer) FetchConfig(context.Context, *FetchConfigRequest) (*ConfigSnapshot, error) {
 	return nil, status.Error(codes.Unimplemented, "method FetchConfig not implemented")
@@ -904,6 +924,24 @@ func _RelayControl_Ping_Handler(srv interface{}, ctx context.Context, dec func(i
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RelayControlServer).Ping(ctx, req.(*PingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RelayControl_Heartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HeartbeatRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).Heartbeat(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_Heartbeat_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).Heartbeat(ctx, req.(*HeartbeatRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1368,6 +1406,10 @@ var RelayControl_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Ping",
 			Handler:    _RelayControl_Ping_Handler,
+		},
+		{
+			MethodName: "Heartbeat",
+			Handler:    _RelayControl_Heartbeat_Handler,
 		},
 		{
 			MethodName: "FetchConfig",

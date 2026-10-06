@@ -74,6 +74,7 @@ func ProvideMasterRuntime(
 		AccessChanges: accessChanges,
 		Users:         users,
 		Leases:        repository.NewRelayLeaseRepository(db),
+		Metrics:       repository.NewRelayMetricsRepository(db),
 		ReservedSink:  billing,
 		NewSelector: relayselect.NewFactory(relayselect.Deps{
 			Config: cfg, APIKeys: apiKeys, Subscriptions: subscriptions, Settings: settingService,

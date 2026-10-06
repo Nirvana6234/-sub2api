@@ -18,6 +18,9 @@ type Control struct {
 
 	selector      Selector
 	selectorEpoch string
+
+	heartbeats    *Heartbeats
+	heartbeatInfo func(ctx context.Context, nodeID int64) (version string, draining bool)
 }
 
 // NewControl 创建控制服务。

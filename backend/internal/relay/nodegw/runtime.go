@@ -120,7 +120,15 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 
 	outbox := node.NewEventOutbox(0)
 	selectClient := node.NewSelectClient(client, outbox)
-	quota := node.NewLocalQuota(node.SelectionRefiller{Client: selectClient}, time.Now, func() time.Duration { return 0 })
+	// 心跳测得的主从时钟偏差：额度租约的停用时间点按它再提前；超过上限时拒绝服务（设计第 19 节）。
+	var heartbeater *node.Heartbeater
+	clockSkew := func() time.Duration {
+		if heartbeater == nil {
+			return 0
+		}
+		return heartbeater.Skew()
+	}
+	quota := node.NewLocalQuota(node.SelectionRefiller{Client: selectClient}, time.Now, clockSkew)
 	quotaSync := node.NewQuotaSync(quota, client)
 	// 重启后本机没有租约：上报空列表，主节点关掉这台之前的租约（设计 4.2）。之后才发选号。
 	if err := retry(ctx, "lease report", quotaSync.Report); err != nil {
@@ -182,6 +190,21 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 		},
 	})
 	go sender.Run(runCtx)
+	// 心跳（设计 11.4）：每 5 秒一次，带本机负载与计数。
+	stats := NewStats()
+	heartbeater = node.NewHeartbeater(client, func() *relayv1.HeartbeatRequest {
+		req := stats.Snapshot(runCtx, dataDir)
+		req.ProgramVersion, req.ConfigVersion = opts.ProgramVersion, cache.Version()
+		req.ReservedTotalMicros, _ = quota.ReservedTotal()
+		appended, pending, oldest := wal.Stats()
+		req.UsageRecordsEnqueuedTotal, req.BillingBacklog = appended, int32(pending)
+		if !oldest.IsZero() {
+			req.BillingOldestAtUnixMs = oldest.UnixMilli()
+		}
+		req.InflightSelectionIds = d.InflightSelections()
+		return req
+	}, time.Duration(cache.GeneralHeartbeatSeconds())*time.Second)
+	go heartbeater.Run(runCtx)
 	go every(runCtx, renewInterval, func() {
 		if err := quotaSync.Renew(runCtx); err != nil {
 			slog.Warn("relay lease renewal failed", "error", err)
@@ -215,6 +238,15 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 		}
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "node_id": id.NodeID()})
 	})
+	r.Use(stats.Middleware())
+	r.Use(func(c *gin.Context) {
+		// 主从时钟偏差超过上限时不接新请求（设计第 19 节）：扣费凭证和额度到期都按时间判断。
+		if !heartbeater.ClockHealthy() {
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"type": "api_error", "message": "Service temporarily unavailable"}})
+			return
+		}
+		c.Next()
+	})
 	r.Use(func(c *gin.Context) {
 		// 扣费队列写不进去时不接新请求（设计 3.1）：否则转发了记不上账。
 		if err := wal.Healthy(); err != nil {
@@ -230,6 +262,7 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 		Addr:              net.JoinHostPort(cfg.Server.Host, strconv.Itoa(cfg.Server.Port)),
 		Handler:           r,
 		ReadHeaderTimeout: 10 * time.Second,
+		ConnState:         stats.ConnState,
 	}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.ListenAndServe() }()

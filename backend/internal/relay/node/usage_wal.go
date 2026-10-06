@@ -99,6 +99,9 @@ type UsageWAL struct {
 	bySeg    map[uint64]*walSegment
 	failure  error
 	closed   bool
+	// queuedAt 记每条待发送记录进队列的时间（心跳报"最早一条的时间"；重放出来的按重放时间算）；appended 是本次启动以来写进队列的条数。
+	queuedAt map[uint64]time.Time
+	appended uint64
 }
 
 // OpenUsageWAL 打开（或新建）队列目录，重放剩下的记录。
@@ -108,7 +111,7 @@ func OpenUsageWAL(dir string, opts UsageWALOptions) (*UsageWAL, error) {
 		return nil, err
 	}
 	w := &UsageWAL{dir: dir, opts: opts, writes: make(chan walWrite, opts.GroupCommitRecords*4), stop: make(chan struct{}),
-		nextSeq: 1, pending: map[uint64]*relayv1.UsageRecord{}, bySeg: map[uint64]*walSegment{}}
+		nextSeq: 1, pending: map[uint64]*relayv1.UsageRecord{}, bySeg: map[uint64]*walSegment{}, queuedAt: map[uint64]time.Time{}}
 	if err := w.replay(); err != nil {
 		return nil, err
 	}
@@ -358,11 +361,14 @@ func (w *UsageWAL) commit(batch []walWrite) error {
 		return w.failLocked(fmt.Errorf("sync usage queue: %w", err))
 	}
 	seg.size += int64(len(buf))
+	now := time.Now()
 	for i, b := range batch {
 		w.pending[seqs[i]] = b.rec
 		w.bySeg[seqs[i]] = seg
+		w.queuedAt[seqs[i]] = now
 		seg.pending[seqs[i]] = struct{}{}
 	}
+	w.appended += uint64(len(batch))
 	if seg.size >= w.opts.SegmentBytes {
 		if err := w.rotateLocked(); err != nil {
 			return w.failLocked(fmt.Errorf("rotate usage queue: %w", err))
@@ -410,6 +416,22 @@ func (w *UsageWAL) Pending(limit int, skip map[uint64]bool) []*relayv1.UsageReco
 	return out
 }
 
+// Stats 返回本次启动以来写进队列的条数、待发送的条数和最早一条进队列的时间（心跳用；队列空时 oldest 为零值）。
+func (w *UsageWAL) Stats() (appended uint64, pending int, oldest time.Time) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for seq := range w.pending {
+		t, ok := w.queuedAt[seq]
+		if !ok {
+			continue
+		}
+		if oldest.IsZero() || t.Before(oldest) {
+			oldest = t
+		}
+	}
+	return w.appended, len(w.pending), oldest
+}
+
 // Len 返回待发送的条数。
 func (w *UsageWAL) Len() int {
 	w.mu.Lock()
@@ -423,6 +445,7 @@ func (w *UsageWAL) Ack(seqs ...uint64) {
 	defer w.mu.Unlock()
 	for _, seq := range seqs {
 		delete(w.pending, seq)
+		delete(w.queuedAt, seq)
 		if seg, ok := w.bySeg[seq]; ok {
 			delete(seg.pending, seq)
 			delete(w.bySeg, seq)

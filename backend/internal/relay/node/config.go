@@ -103,6 +103,14 @@ func (c *ConfigCache) SetOpener(open func(sealed, aad []byte) ([]byte, error)) {
 	c.mu.Unlock()
 }
 
+// GeneralHeartbeatSeconds 返回通用配置里的心跳间隔（秒；快照还没到或没配时为默认值 5）。
+func (c *ConfigCache) GeneralHeartbeatSeconds() int {
+	if nc, ok := c.Node(); ok && nc.General.HeartbeatIntervalSeconds > 0 {
+		return nc.General.HeartbeatIntervalSeconds
+	}
+	return int(DefaultHeartbeatInterval / time.Second)
+}
+
 // SealedSection 返回一个加密下发的分段（明文，可含密钥，不要写日志）。
 func (c *ConfigCache) SealedSection(name string) ([]byte, bool) {
 	p := c.sealed.Load()

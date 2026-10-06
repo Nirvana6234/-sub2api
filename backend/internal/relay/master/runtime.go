@@ -69,6 +69,8 @@ type RuntimeDeps struct {
 	// ReservedSink：主从分流运行时把冻结额读取挂到余额预检上（service.BillingCacheService）。
 	ReservedSink ReservedBalanceSink
 	Notifier     Notifier
+	// Metrics 保存心跳的分钟汇总（relay_node_minute_metrics）；nil 时不落库。
+	Metrics MetricsSink
 	// NewSelector 创建选号实现（relayselect，WP7）；nil 时不提供选号（测试、还没接入的部署）。
 	NewSelector func(SelectEnv) Selector
 	// NewSettler 创建扣费入账（relaysettle，WP8）；nil 时不提供扣费服务。
@@ -136,6 +138,8 @@ type runningRelay struct {
 	selector    Selector
 	// keyAssigner 给新建的 API Key 选节点（设计 10.2）。
 	keyAssigner *KeyAssigner
+	// heartbeats 记各节点的心跳、在线状态、负载（设计 11.4）。
+	heartbeats *Heartbeats
 	// handoffKey 是"交给主节点转发"的标记密钥（handoff.go）。
 	handoffKey []byte
 }
@@ -443,6 +447,16 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 	}
 	relayv1.RegisterRelayEnrollmentServer(server.GRPC(), NewEnrollment(nodes, server))
 	control := NewControl(publisher)
+	heartbeats := NewHeartbeats(HeartbeatsOptions{
+		Now: r.now, Notifier: r.deps.Notifier, Sink: r.deps.Metrics,
+		OfflineAfter: func() time.Duration {
+			return time.Duration(r.cachedGeneralConfig(context.Background()).WithDefaults().OfflineAfterSeconds) * time.Second
+		},
+	})
+	control.AttachHeartbeats(heartbeats, func(ctx context.Context, nodeID int64) (string, bool) {
+		version, _ := publisher.VersionFor(ctx, nodeID)
+		return version, nodes.Status(nodeID) == NodeDraining
+	})
 	if quotas != nil {
 		control.AttachQuotas(quotas, recaller, server.Epoch())
 	}
@@ -472,7 +486,9 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 		if quotas != nil {
 			env.RefreshUser = quotas.RefreshUser
 		}
-		relayv1.RegisterRelayBillingServer(server.GRPC(), NewBilling(r.deps.NewSettler(env)))
+		billing := NewBilling(r.deps.NewSettler(env))
+		billing.OnSettled = heartbeats.NoteSettled
+		relayv1.RegisterRelayBillingServer(server.GRPC(), billing)
 	}
 	relayv1.RegisterRelayEventsServer(server.GRPC(), events)
 
@@ -485,7 +501,7 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 	}
 
 	runCtx, cancel := context.WithCancel(context.Background())
-	running := &runningRelay{server: server, listener: lis, nodes: nodes, publisher: publisher, events: events, invalidator: invalidator, cancel: cancel, ca: ca, keys: keys, signing: signing, revoker: revoker, quotas: quotas, recaller: recaller, quotaEvents: qEvents, selector: selector, handoffKey: handoffKey}
+	running := &runningRelay{server: server, listener: lis, nodes: nodes, publisher: publisher, events: events, invalidator: invalidator, cancel: cancel, ca: ca, keys: keys, signing: signing, revoker: revoker, quotas: quotas, recaller: recaller, quotaEvents: qEvents, selector: selector, handoffKey: handoffKey, heartbeats: heartbeats}
 	var unsubs []func()
 	if r.deps.Hub != nil {
 		unsubs = append(unsubs, r.deps.Hub.Subscribe(publisher.OnSettingsChanged))
@@ -495,8 +511,8 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 		unsubs = append(unsubs, func() { r.deps.APIKeys.SetAuthCacheInvalidationListener(nil) })
 		// 新建的 Key 从此按分配规则定节点；开关关闭时摘下，Key 保持未分配。
 		running.keyAssigner = NewKeyAssigner(KeyAssignerDeps{
-			Nodes: r.deps.Store.List, Online: events.ConnectedNodes, Config: r.cachedGeneralConfig,
-			Stats: r.deps.APIKeys.RelayKeyStats, Now: r.now,
+			Nodes: r.deps.Store.List, Online: heartbeats.OnlineNodes, Config: r.cachedGeneralConfig,
+			Stats: r.deps.APIKeys.RelayKeyStats, Now: r.now, Load: heartbeats.Load,
 		})
 		r.deps.APIKeys.SetRelayKeyAssigner(running.keyAssigner)
 		unsubs = append(unsubs, func() { r.deps.APIKeys.SetRelayKeyAssigner(nil) })
@@ -542,6 +558,7 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 		nodes.RunRefresh(runCtx, func(err error) { slog.Warn("relay node state refresh failed", "error", err) })
 	})
 	running.goRun(func() { publisher.RunRecheck(runCtx) })
+	running.goRun(func() { heartbeats.Run(runCtx) })
 	if quotas != nil {
 		running.goRun(func() { quotas.RunExpiry(runCtx) })
 		running.goRun(func() { qEvents.run(runCtx) })
@@ -769,6 +786,7 @@ func (r *Runtime) DisableNode(ctx context.Context, nodeID, actor int64) error {
 	if err := r.nodeOp(func(n *Nodes) error { return n.Disable(ctx, nodeID, actor) }); err != nil {
 		return err
 	}
+	r.forgetHeartbeats(nodeID)
 	return r.voidNodeLeases(ctx, nodeID, "node_disabled")
 }
 
@@ -807,6 +825,7 @@ func (r *Runtime) RevokeNode(ctx context.Context, nodeID, actor int64, reason st
 	if err := r.nodeOp(func(n *Nodes) error { return n.RevokeCertificates(ctx, nodeID, actor, reason) }); err != nil {
 		return err
 	}
+	r.forgetHeartbeats(nodeID)
 	return r.voidNodeLeases(ctx, nodeID, "node_revoked")
 }
 
@@ -1040,4 +1059,31 @@ func (r *Runtime) cachedGeneralConfig(ctx context.Context) GeneralConfig {
 	}
 	r.generalCache.value, r.generalCache.at = g, r.now()
 	return g
+}
+
+// forgetHeartbeats 停用或吊销之后忘掉这台的心跳状态（它不是掉线，不发离线通知）。
+func (r *Runtime) forgetHeartbeats(nodeID int64) {
+	if rr, err := r.runningRelay(); err == nil && rr.heartbeats != nil {
+		rr.heartbeats.Forget(nodeID)
+	}
+}
+
+// NodeHealths 返回各节点的实时状态（心跳、在线、负载、时钟偏差、对账差额，管理页）。
+func (r *Runtime) NodeHealths(ctx context.Context) ([]NodeHealth, error) {
+	rr, err := r.runningRelay()
+	if err != nil {
+		return nil, err
+	}
+	nodes, err := r.deps.Store.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]NodeHealth, 0, len(nodes))
+	for _, n := range nodes {
+		if !n.Status.Serving() {
+			continue
+		}
+		out = append(out, rr.heartbeats.Health(n.ID, n.BandwidthLimitMbps))
+	}
+	return out, nil
 }

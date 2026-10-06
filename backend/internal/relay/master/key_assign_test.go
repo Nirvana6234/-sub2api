@@ -33,7 +33,7 @@ func (p *pickEnv) assigner() *master.KeyAssigner {
 			return master.GeneralConfig{MasterRatioPercent: &p.ratio}.WithDefaults()
 		},
 		Stats: func(context.Context, time.Time) (map[int64]service.RelayKeyStat, error) { return p.stats, nil },
-		Load:  func(id int64) float64 { return p.load[id] },
+		Load:  func(id int64, _ int) float64 { return p.load[id] },
 		Rand:  func() float64 { return p.rnd },
 	}
 	if p.online != nil {

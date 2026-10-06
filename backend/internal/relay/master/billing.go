@@ -37,6 +37,9 @@ type Billing struct {
 	relayv1.UnimplementedRelayBillingServer
 	settler Settler
 
+	// OnSettled 在一批记录入账后调用（节点、入账的条数——不含要重试的）；心跳对账用。
+	OnSettled func(nodeID int64, records int)
+
 	mu       sync.Mutex
 	lastSeqs map[int64]uint64
 }
@@ -57,8 +60,16 @@ func (b *Billing) SubmitUsage(ctx context.Context, batch *relayv1.UsageBatch) (*
 	}
 	b.checkSequence(peer.NodeID, batch.GetBatchSeq())
 	ack := &relayv1.UsageBatchAck{Results: make([]*relayv1.UsageRecordResult, 0, len(batch.GetRecords()))}
+	settled := 0
 	for _, rec := range batch.GetRecords() {
-		ack.Results = append(ack.Results, b.settler.Settle(ctx, peer.NodeID, rec))
+		res := b.settler.Settle(ctx, peer.NodeID, rec)
+		if res.GetStatus() != relayv1.UsageRecordStatus_USAGE_RECORD_STATUS_RETRY {
+			settled++
+		}
+		ack.Results = append(ack.Results, res)
+	}
+	if b.OnSettled != nil && settled > 0 {
+		b.OnSettled(peer.NodeID, settled)
 	}
 	return ack, nil
 }

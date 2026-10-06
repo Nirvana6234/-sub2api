@@ -60,6 +60,18 @@ type Dispatcher struct {
 	pending sync.Map // seq -> *node.Reservation
 	// negKeys 是"查不到的 Key"负缓存（keycache.go）。
 	negKeys *negativeKeyCache
+	// inflight 是进行中的选号 ID（心跳带给主节点续期用，设计 11.4）。
+	inflight sync.Map // selectionID -> struct{}
+}
+
+// InflightSelections 返回进行中的选号 ID（最多 5000 个）。
+func (d *Dispatcher) InflightSelections() []string {
+	var ids []string
+	d.inflight.Range(func(k, _ any) bool {
+		ids = append(ids, k.(string))
+		return len(ids) < 5000
+	})
+	return ids
 }
 
 // NewDispatcher 创建分发。
@@ -357,6 +369,7 @@ func (d *Dispatcher) heldQuota(userID, apiKeyID int64) []*relayv1.HeldQuota {
 // admitSelection 用上选号结果：额度、预扣、账号凭据、ctx。失败时放掉这次选号并按主节点不可用处理。
 func (d *Dispatcher) admitSelection(c *gin.Context, st *requestState, req handler.OpenAIRelaySelectRequest, sel *relayv1.Selection) handler.OpenAIRelaySelectResult {
 	a := &attemptState{selectionID: sel.GetSelectionId(), voucher: sel.GetVoucher(), userID: sel.GetUserId(), apiKeyID: req.APIKey.ID}
+	d.inflight.Store(a.selectionID, struct{}{})
 	st.mu.Lock()
 	st.current = a
 	st.mu.Unlock()
@@ -474,6 +487,7 @@ func (d *Dispatcher) flush(st *requestState, requestDone bool) {
 	if !submitted && a.reservation != nil {
 		a.reservation.Cancel()
 	}
+	d.inflight.Delete(a.selectionID)
 	rel := &relayv1.SelectionRelease{
 		SelectionId: a.selectionID, RequestDone: requestDone, ResponseIds: ids, Voucher: a.voucher,
 		ForwardSucceeded: succeeded, UpstreamServed: succeeded || submitted,

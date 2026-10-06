@@ -202,6 +202,10 @@ func (c *Control) Select(ctx context.Context, req *relayv1.SelectRequest) (*rela
 	if req.GetRequestId() == "" || req.GetAttempt() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "request_id and attempt are required")
 	}
+	if c.heartbeats != nil && c.heartbeats.SuspectedUnderReporting(nodeID) {
+		// 扣费记录大量丢失的节点不再发额度和选号，等管理员查看（设计 5.4）。
+		return nil, status.Error(codes.Unavailable, "this node is suspended: usage records are missing")
+	}
 	resp, err := c.selector.Select(ctx, nodeID, req)
 	if err == nil && ctx.Err() != nil && resp.GetSelection() == nil {
 		// 调用已取消时的拒绝多半是取消造成的：按错误返回，幂等缓存不会记住它，从节点超时重发时重新判断。

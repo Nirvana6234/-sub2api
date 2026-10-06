@@ -462,6 +462,17 @@ func (h *RelayHandler) RetireKey(c *gin.Context) {
 	response.Success(c, nil)
 }
 
+// NodeHealths 返回各在服务节点的实时状态：心跳内容、在线、负载、时钟偏差、扣费记录对账差额（设计 11.4、11.5）。
+// GET /api/v1/admin/relay/nodes/health
+func (h *RelayHandler) NodeHealths(c *gin.Context) {
+	healths, err := h.runtime.NodeHealths(c.Request.Context())
+	if err != nil {
+		relayError(c, err)
+		return
+	}
+	response.Success(c, healths)
+}
+
 // ReplaceNodeRequest：换机器时新节点的 ID 和它在本机打印的指纹。
 type ReplaceNodeRequest struct {
 	NewNodeID   int64  `json:"new_node_id" binding:"required,min=1"`
