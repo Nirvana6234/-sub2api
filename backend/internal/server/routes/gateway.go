@@ -208,6 +208,8 @@ func RegisterGatewayRoutes(
 	gateway.Use(blacklistAccount)
 	gateway.Use(autoGroupModelRouting)
 	gateway.GET("/sub2api/billing", h.Gateway.KeyBillingInfo)
+	// 主从分流：这把 Key 分配的接入地址（给第三方工具发现新地址用）；是查询不是转发，主节点分配比例为 0 时也可用。
+	gateway.GET("/relay/assignment", h.Gateway.RelayAssignment)
 	gateway.Use(groupModelAllowlist)
 	gateway.Use(compositeTarget)
 	gateway.Use(requireGroupAnthropic)

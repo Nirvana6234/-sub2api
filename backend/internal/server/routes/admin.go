@@ -968,6 +968,12 @@ func registerRelayRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth
 		relay.POST("/nodes/:id/reclaim-quota", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.ReclaimNodeQuota)
 		relay.POST("/users/:id/reclaim-quota", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.ReclaimUserQuota)
 
+		// API Key 的节点分配（设计 10.2）
+		relay.GET("/api-keys/assignment", h.Admin.Relay.KeyAssignmentSummary)
+		relay.POST("/api-keys/assign-unassigned", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.AssignUnassignedKeys)
+		relay.POST("/api-keys/move", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.MoveKeys)
+		relay.POST("/nodes/:id/move-keys", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.MoveNodeKeys)
+
 		relay.GET("/keys/:purpose", h.Admin.Relay.ListKeys)
 		relay.POST("/keys/:purpose/stage", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.StageKey)
 		relay.POST("/keys/:purpose/:version/activate", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.ActivateKey)

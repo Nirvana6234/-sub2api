@@ -77,6 +77,12 @@ type APIKey struct {
 	// CurrentConcurrency is the real-time active request count for this API key.
 	CurrentConcurrency int `json:"current_concurrency"`
 
+	// 主从分流：分配的节点（nil 未分配，0 主节点）、这台的接入地址（主节点没配置 api_base_url 时为空，前端用当前站点地址）、
+	// 以及分配最近一次改变的时间（Key 页面据此提示"地址已变更"）。
+	RelayNodeID           *int64     `json:"relay_node_id,omitempty"`
+	RelayBaseURL          string     `json:"relay_base_url,omitempty"`
+	RelayAddressChangedAt *time.Time `json:"relay_address_changed_at,omitempty"`
+
 	// Rate limit fields
 	RateLimit5h   float64    `json:"rate_limit_5h"`
 	RateLimit1d   float64    `json:"rate_limit_1d"`

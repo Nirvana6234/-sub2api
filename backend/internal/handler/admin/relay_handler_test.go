@@ -36,6 +36,9 @@ func TestRelayErrorMapsBusinessErrorsTo4xx(t *testing.T) {
 		{master.ErrKeyNotStaged, http.StatusConflict},
 		{master.ErrKeyInUse, http.StatusConflict},
 		{master.ErrKeyRetireTooEarly, http.StatusConflict},
+		{master.ErrKeyTargetUnavailable, http.StatusConflict},
+		{master.ErrMasterRatioZero, http.StatusConflict},
+		{master.ErrKeyAssignmentUnavailable, http.StatusConflict},
 		{keystore.ErrAlreadyStaged, http.StatusConflict},
 		{errors.New("database is down"), http.StatusInternalServerError},
 	}

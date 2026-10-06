@@ -87,6 +87,8 @@ type SelectEnv struct {
 	VerifyVoucher func(raw []byte, reportingNodeID int64) (*relayv1.Voucher, error)
 	// GeneralConfig 返回主从分流通用配置（节点规则、主节点分配比例等；带短缓存，取不到时是默认值）。nil 时按默认值。
 	GeneralConfig func(ctx context.Context) GeneralConfig
+	// NodeAddress 返回节点（0 为主节点）的接入地址（拒绝提示里告诉用户改用哪个地址）；nil 或取不到时返回空。
+	NodeAddress func(ctx context.Context, nodeID int64) string
 	// VerifyTicket 验一张中转票据（签名、有效期、签给的节点；用户状态和 token_version 由选号实现复查，设计 8.1）。
 	VerifyTicket func(token string, nodeID int64) (*relayv1.Ticket, error)
 }

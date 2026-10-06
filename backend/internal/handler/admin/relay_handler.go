@@ -150,8 +150,10 @@ func relayError(c *gin.Context, err error) {
 	case errors.Is(err, master.ErrFingerprintMismatch), errors.Is(err, master.ErrDomainRequired),
 		errors.Is(err, master.ErrInvalidGeneralConfig), errors.Is(err, master.ErrUnknownKeyPurpose):
 		err = infraerrors.BadRequest("RELAY_INVALID_REQUEST", err.Error())
-	case errors.Is(err, master.ErrRelayNotRunning):
+	case errors.Is(err, master.ErrRelayNotRunning), errors.Is(err, master.ErrKeyAssignmentUnavailable):
 		err = infraerrors.Conflict("RELAY_NOT_RUNNING", err.Error())
+	case errors.Is(err, master.ErrKeyTargetUnavailable), errors.Is(err, master.ErrMasterRatioZero):
+		err = infraerrors.Conflict("RELAY_KEY_TARGET_UNAVAILABLE", err.Error())
 	case errors.Is(err, master.ErrNodesStillServing):
 		err = infraerrors.Conflict("RELAY_NODES_STILL_SERVING", err.Error())
 	case errors.Is(err, master.ErrStatusConflict), errors.Is(err, master.ErrDomainTaken),
@@ -458,4 +460,87 @@ func (h *RelayHandler) RetireKey(c *gin.Context) {
 		return
 	}
 	response.Success(c, nil)
+}
+
+// ---- API Key 的节点分配（设计 10.2、10.7、10.8）----
+
+// KeyAssignmentSummary 返回各节点上分配的 Key 数（改比例、停用节点前看影响）。
+// GET /api/v1/admin/relay/api-keys/assignment
+func (h *RelayHandler) KeyAssignmentSummary(c *gin.Context) {
+	summary, err := h.runtime.KeyAssignmentSummary(c.Request.Context())
+	if err != nil {
+		relayError(c, err)
+		return
+	}
+	response.Success(c, summary)
+}
+
+// AssignUnassignedKeys 给所有还没分配节点的 Key 分配（上线时批量分配）。
+// POST /api/v1/admin/relay/api-keys/assign-unassigned
+func (h *RelayHandler) AssignUnassignedKeys(c *gin.Context) {
+	actor, ok := relayActor(c)
+	if !ok {
+		return
+	}
+	assigned, left, err := h.runtime.AssignUnassignedKeys(c.Request.Context(), actor)
+	if err != nil {
+		relayError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"assigned": assigned, "left": left})
+}
+
+// MoveKeysRequest 把指定的 Key 重新分配给一个节点（0 为主节点）。
+type MoveKeysRequest struct {
+	KeyIDs []int64 `json:"key_ids" binding:"required,min=1,max=1000"`
+	NodeID *int64  `json:"node_id" binding:"required,min=0"`
+}
+
+// MoveKeys 把指定的 Key 重新分配给一个节点。
+// POST /api/v1/admin/relay/api-keys/move
+func (h *RelayHandler) MoveKeys(c *gin.Context) {
+	var req MoveKeysRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	actor, ok := relayActor(c)
+	if !ok {
+		return
+	}
+	moved, err := h.runtime.MoveKeys(c.Request.Context(), actor, req.KeyIDs, *req.NodeID)
+	if err != nil {
+		relayError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"moved": moved})
+}
+
+// MoveNodeKeysRequest：to_node_id 为空时每把 Key 按分配规则重新选一台（不选原节点）。
+type MoveNodeKeysRequest struct {
+	ToNodeID *int64 `json:"to_node_id" binding:"omitempty,min=0"`
+}
+
+// MoveNodeKeys 把分配给这台节点的全部 Key 重新分配（节点要停用、下线前用）。
+// POST /api/v1/admin/relay/nodes/:id/move-keys
+func (h *RelayHandler) MoveNodeKeys(c *gin.Context) {
+	id, ok := relayNodeID(c)
+	if !ok {
+		return
+	}
+	var req MoveNodeKeysRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	actor, ok := relayActor(c)
+	if !ok {
+		return
+	}
+	moved, left, err := h.runtime.MoveNodeKeys(c.Request.Context(), actor, id, req.ToNodeID)
+	if err != nil {
+		relayError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"moved": moved, "left": left})
 }

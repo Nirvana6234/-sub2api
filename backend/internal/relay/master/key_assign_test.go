@@ -327,3 +327,32 @@ func TestRuntimeAssignsUnassignedKeysWithoutMarkingChange(t *testing.T) {
 	require.Zero(t, summary.Unassigned)
 	require.Equal(t, int64(2), summary.Master)
 }
+
+// Key 的接入地址按分配的节点现取：从节点是 https://<管理页填写的域名>，主节点是 api_base_url。
+func TestRuntimeResolvesNodeAddresses(t *testing.T) {
+	ctx := context.Background()
+	h := newKeyAdminHarness(t, 10)
+	a := h.nodes[0]
+
+	addr, ok := h.runtime.ResolveRelayAddress(ctx, a.ID)
+	require.True(t, ok)
+	require.Equal(t, service.RelayAddress{Role: service.RelayRoleRelay, NodeID: a.ID, BaseURL: "https://a.example.com"}, addr)
+
+	// 主节点：api_base_url（没配置时为空，调用方用当前请求的主机）。
+	addr, ok = h.runtime.ResolveRelayAddress(ctx, 0)
+	require.True(t, ok)
+	require.Equal(t, service.RelayRoleMaster, addr.Role)
+	require.Empty(t, addr.BaseURL)
+	require.NoError(t, h.settings.Set(ctx, service.SettingKeyAPIBaseURL, "https://api.example.com/"))
+	h.runtime.Reconcile(ctx) // 地址有 10 秒缓存：节点操作会清掉它，这里直接用节点操作触发。
+	require.NoError(t, h.runtime.SetNodeAllowMultiIP(ctx, a.ID, 1, true))
+	addr, _ = h.runtime.ResolveRelayAddress(ctx, 0)
+	require.Equal(t, "https://api.example.com", addr.BaseURL)
+
+	_, ok = h.runtime.ResolveRelayAddress(ctx, 999)
+	require.False(t, ok, "an unknown node has no address")
+	// 运行时在跑的时候，业务层的解析也接上了。
+	got, ok := service.ResolveRelayAddressForKey(ctx, ptr(a.ID))
+	require.True(t, ok)
+	require.Equal(t, "https://a.example.com", got.BaseURL)
+}

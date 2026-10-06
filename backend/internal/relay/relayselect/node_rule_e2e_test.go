@@ -108,3 +108,24 @@ func TestReassignedKeyMovesBetweenNodesImmediately(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, body)
 	e.world.waitReleased(t)
 }
+
+// 拒绝提示里带分配的地址（设计 10.2：此 Key 只能通过分配给它的地址使用）。
+func TestNodeRuleRejectionNamesTheAssignedAddress(t *testing.T) {
+	e := startE2E(t)
+	e.world.sel.env.GeneralConfig = func(context.Context) master.GeneralConfig {
+		return master.GeneralConfig{APIKeyNodeRule: master.APIKeyNodeRuleAssigned}.WithDefaults()
+	}
+	e.world.sel.env.NodeAddress = func(_ context.Context, id int64) string {
+		if id == e.nodeID+7 {
+			return "https://r2.example.com"
+		}
+		return ""
+	}
+	key := e.world.keys.keys["sk-a"]
+	other := e.nodeID + 7
+	_, err := e.world.sel.deps.APIKeys.AssignRelayNode(context.Background(), []int64{key.ID}, other, true)
+	require.NoError(t, err)
+	status, body := e.post(t, "/v1/responses", "sk-a", `{"model":"gpt-5","input":"hi"}`)
+	require.Equal(t, http.StatusForbidden, status, body)
+	require.Contains(t, gjson.Get(body, "error.message").String(), "https://r2.example.com")
+}

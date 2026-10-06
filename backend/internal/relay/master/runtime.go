@@ -104,6 +104,9 @@ type Runtime struct {
 	keyMu sync.Mutex
 	now   func() time.Time
 
+	// addresses 是节点接入地址的短缓存（address.go）。
+	addresses addressCache
+
 	// generalCache 是选号热路径上通用配置的短缓存。
 	generalCache struct {
 		mu    sync.Mutex
@@ -449,6 +452,7 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 			VerifyVoucher:     r.VerifyVoucher,
 			VerifyTicket:      r.VerifyTicket,
 			GeneralConfig:     r.cachedGeneralConfig,
+			NodeAddress:       r.nodeAddress,
 		})
 		control.AttachSelector(selector, server.Epoch())
 		RouteNodeEvents(events, selector)
@@ -489,6 +493,10 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 		r.deps.APIKeys.SetRelayKeyAssigner(running.keyAssigner)
 		unsubs = append(unsubs, func() { r.deps.APIKeys.SetRelayKeyAssigner(nil) })
 	}
+	// Key 的接入地址按分配的节点现取（导出配置、地址查询接口）。
+	r.invalidateAddresses()
+	service.SetRelayAddressResolver(r)
+	unsubs = append(unsubs, func() { service.SetRelayAddressResolver(nil) })
 	if r.deps.AccessChanges != nil {
 		unsubs = append(unsubs, r.deps.AccessChanges.Subscribe(invalidator.OnAccessChange))
 		if revoker != nil {
@@ -719,6 +727,7 @@ func (r *Runtime) nodeOp(fn func(*Nodes) error) error {
 	if err := fn(rr.nodes); err != nil {
 		return err
 	}
+	r.invalidateAddresses()
 	rr.publisher.Trigger()
 	return nil
 }

@@ -2,6 +2,7 @@
 package dto
 
 import (
+	"context"
 	"strconv"
 	"strings"
 	"time"
@@ -129,6 +130,11 @@ func APIKeyFromService(k *service.APIKey) *APIKey {
 	if k.Window7dStart != nil && !service.IsWindowExpired(k.Window7dStart, service.RateLimitWindow7d) {
 		t := k.Window7dStart.Add(service.RateLimitWindow7d)
 		out.Reset7dAt = &t
+	}
+	out.RelayNodeID = k.RelayNodeID
+	out.RelayAddressChangedAt = k.RelayNodeChangedAt
+	if addr, ok := service.ResolveRelayAddressForKey(context.Background(), k.RelayNodeID); ok {
+		out.RelayBaseURL = addr.BaseURL
 	}
 	return out
 }

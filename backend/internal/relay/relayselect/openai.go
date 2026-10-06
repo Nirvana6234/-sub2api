@@ -819,5 +819,11 @@ func (s *selector) nodeRuleRejection(ctx context.Context, apiKey *service.APIKey
 	if rule == master.APIKeyNodeRuleAny {
 		return nil
 	}
-	return rawRejection(middleware.RelayNodeNotAssignedRejection(method, path, "This API key can only be used through the address assigned to it"))
+	message := "This API key can only be used through the address assigned to it"
+	if s.env.NodeAddress != nil {
+		if addr := s.env.NodeAddress(ctx, *apiKey.RelayNodeID); addr != "" {
+			message += ": " + addr
+		}
+	}
+	return rawRejection(middleware.RelayNodeNotAssignedRejection(method, path, message))
 }
