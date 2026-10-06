@@ -1,4 +1,4 @@
-# 主从节点架构设计（v0.24，2026-10-06）
+# 主从节点架构设计（v0.25，2026-10-06）
 
 > 状态：开发中（分支 `feat/master-relay-nodes`，进度见开发计划）。本文只记录当前结论；历史版本不再保留在正文里。开发计划见 `docs/MASTER_RELAY_NODES_PLAN.md`。
 > 代码引用按 2026-09-25 的 main（`c652d850`）核对；行号会漂移，引用处同时写了函数名，以函数名为准。
@@ -630,6 +630,15 @@ API Key 用户直接访问从节点，由从节点向主节点认证（8.2）。
 
 每台从节点用自己域名的 HTTPS 证书，由从节点自己申请（11.1、15.2）。
 
+**实现状态（v0.25，WP11）**，对应上面各条的测试在括号里：
+- **生成时分配**（`master/key_assign.go`，`service/api_key_relay.go`）：`APIKeyService.Create` 在写库前问分配器要节点，写进 `relay_node_id`；分配失败不影响建 Key（保持未分配，哪台都接）；开关关闭时没有分配器；Playground 内部 Key（`SkipRelayAssignment`）不分配（8.1）。先按比例掷骰子决定给不给主节点；给从节点时，候选是"已激活、有域名、事件流在线、负载没超阈值"的节点（排空、停用、待激活、没填域名、不在线的都不分），按权重**带宽上限 ÷ (1 + 这台上近 7 天用过的 Key 数)** 加权随机（带宽没填按 100；Key 数统计缓存 30 秒，期间新分配的即时计入）。没有负载合格的从节点时：比例大于 0 给主节点，否则给负载最低的从节点；一台都没有且比例为 0 时不分配。负载由心跳上报，那部分属于 WP13/WP14，现在按 0。（`TestKeyAssignerPicksByRatioAndEligibility`、`…NeverPicksMasterAtRatioZero`、`…WeightsByBandwidthAndActiveKeys`、`…RespectsLoadThreshold`、`TestAPIKeyCreateAssignsRelayNode`）
+- **重新分配**：管理接口 `POST /admin/relay/api-keys/move`（指定 Key）、`POST /admin/relay/nodes/:id/move-keys`（按节点批量；不指定目标时每把按分配规则重选、不选原节点，选不出的留在原节点并计数）、`GET /admin/relay/api-keys/assignment`（各节点上的 Key 数，改比例、停用节点前看影响）。目标必须能接收（节点已激活有域名；主节点比例为 0 时不能给主节点）；记"分配改变时间"；**每把 Key 的鉴权缓存作废并推给从节点**，所以节点规则马上换边，不用等缓存过期。（`TestRuntimeMovesKeysBetweenNodes`、`…RefusesMasterTargetAtRatioZero`、`…MovesAllKeysOfANode`、`TestReassignedKeyMovesBetweenNodesImmediately`）
+- **上线时给存量 Key 分配**（10.7 第 1 步）：`POST /admin/relay/api-keys/assign-unassigned`，按同一规则；第一次分配不记"分配改变时间"。（`TestRuntimeAssignsUnassignedKeysWithoutMarkingChange`）
+- **导出地址**：Key 列表带 `relay_node_id`、`relay_base_url`（从节点是 `https://<域名>`，主节点是 `api_base_url`，没配置时为空，前端用当前站点地址）、`relay_address_changed_at`（Key 页面据此提示"地址已变更"）；地址按节点现取（10 秒缓存，节点操作时清）。（`TestRuntimeResolvesNodeAddresses`）节点规则的 403 提示里带分配的地址。（`TestNodeRuleRejectionNamesTheAssignedAddress`）
+- **换机器**（11.6）：`POST /admin/relay/nodes/:id/replace`（新节点 ID + 它的指纹）：先核对（指纹、新节点待激活、旧节点有域名——在停用旧节点之前），在用的旧节点先停用（额度作废放回），再在一个事务里清掉旧节点的域名、激活新节点（域名、名称、带宽、区域沿用），最后把分到旧节点的 Key 全转给新节点（域名不变，不记地址已变更）。内存和 SQL 存储跑同一套契约用例。（`TestRuntimeReplacesANodeKeepingDomainAndKeys`、契约用例 `replace node moves the domain to the new machine`）
+- **"删除从节点"**：系统里没有删除节点的操作，只有拒绝、停用、吊销（退回待激活），这几个都不自动移走 Key（可能只是维护）。要下线一台时管理员先用 `move-keys` 把它的 Key 移走（接口先给出影响数量）。
+- **有意推迟**：①"Key 能用的分组里全是'仅主节点'账号时分配主节点"——要在建 Key 时查分组和账号，自动分组 Key 的候选分组还会变，先不做（这样的 Key 会按普通规则分到从节点，用不了仅主节点账号时由请求时的选号决定）；②改比例到 0 时"保存前列出影响、确认后批量重新分配"只提供了数量接口，保存本身不拦（前端 WP16 做确认）。
+
 ### 10.3 健康判断
 
 心跳只能证明"从节点到主节点"是通的。从节点对外端口被挡、HTTPS 证书过期、域名解析错、连不上上游时，心跳照样正常。所以还要：
@@ -677,6 +686,8 @@ API Key 用户直接访问从节点，由从节点向主节点认证（8.2）。
 - 主节点上的转发走本机完整流程，直接读写数据库扣费，不走额度锁定。余额检查看可花余额；用户额度锁在从节点上不够用时，按 4.4 先从从节点收回。
 - **主节点转发设上限**（带宽、并发请求数，后台可调），超过上限返回"服务繁忙"（OpenAI / Anthropic 格式）。登录、计费、从节点通信优先，不受这个上限影响。网页聊天和游客试用也算进这个上限（它们同样在转发上游流量）；手机同步会话不算（消息小、连接长，算进去超限时会把手机连接断掉）。否则控制功能被挤垮，从节点恢复后也连不上主节点；也防止有人打挂从节点把流量逼到主节点。
 - **恢复**：有从节点重新可用后，小白端下次定期询问时分回从节点；管理员把手动改到主节点的从节点域名改回（10.3），API Key 用户不用操作。
+
+**实现状态（v0.25，WP11）**：主节点分配比例为 0 时的闸门是一个挂在整个 HTTP 引擎上的中间件（`middleware.RelayMasterGateMiddleware`），只在主从分流在运行且比例为 0 时生效，只对 API Key 的**转发路由**生效——按路由模板（`c.FullPath()`）和一张**正面清单**判断（`IsRelayForwardingRoute`：messages、responses、chat/completions、图片生成与编辑、视频、语音、embeddings、alpha search、systemone、web/x search、Seedance 任务、live、Gemini 原生的 `POST /models/*`，各前缀和根路径别名），模型列表、用量、余额、批量图片、图片任务查询、分配查询等不是转发的接口（8.4）和网页、后台都不在清单里，不认识的路由一律放行。被拒时回 403（`master_relay_disabled`，OpenAI / Anthropic / Google 格式），提示这把 Key 分配的地址。**从节点交给主节点转发的请求要放行**，所以交过来的请求带从节点自己签的标记 `X-Sub2api-Relay-Handoff`：主节点进程内随机生成一把密钥，经加密下发的配置分段（`handoff`）给各从节点；标记 = HMAC(密钥, 节点 ID、时间、方法、路径)，5 分钟有效；主节点验签并确认签发的节点还在服务（激活或排空）才放行；从节点转交时先去掉客户端自己带的同名头，再带自己的。主节点重启换新密钥，节点随配置版本重新拉取。（`TestIsRelayForwardingRoute`、`TestRelayMasterGateBlocksDirectForwardingAtRatioZero`、`TestRuntimeGateBlocksMasterForwardingAtRatioZero`、`TestHandOffCarriesTheNodesOwnMarker`）
 
 ### 10.6 主节点不可用时
 
@@ -758,6 +769,8 @@ GET /v1/relay/assignment        Authorization: Bearer <API Key>
 - 返回这个 Key 的 `role`、`node_id`、`base_url`（主节点时为主节点现有域名），不返回票据。
 - 主节点域名和所有从节点都可以访问；从节点转交主节点执行（8.4）。这是查询不是转发，主节点分配比例为 0 时也可用。
 - Key 被重新分配后，工具可以用它发现新地址。
+
+**实现状态（v0.25，WP11）**：`GET /v1/relay/assignment` 已实现（API Key 版本），返回 `role`（`relay` / `master` / `unassigned`）、`node_id`、`base_url`；主节点没配置 `api_base_url` 时用当前请求的主机；分配的节点已经没有地址时回 503。注册在 `/v1` 组里 `/sub2api/billing` 旁（同一条鉴权链，不受转发闸门影响）；从节点按 8.4 交给主节点。（`TestRelayAssignmentReturnsTheAssignedAddress`、`TestNonForwardingEndpointsAreHandedOffUnchanged`）小白端版本（`/api/v1/paw/relay/assignment`）属于 WP12。
 
 ## 11. 从节点注册、激活与管理
 

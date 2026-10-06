@@ -50,9 +50,9 @@ type KeyAssignerDeps struct {
 type KeyAssigner struct {
 	deps KeyAssignerDeps
 
-	mu       sync.Mutex
-	stats    map[int64]service.RelayKeyStat
-	statsAt  time.Time
+	mu      sync.Mutex
+	stats   map[int64]service.RelayKeyStat
+	statsAt time.Time
 }
 
 // NewKeyAssigner 创建分配器。
