@@ -77,6 +77,9 @@ func (u *userAssigner) usable(n *Node, rr *runningRelay) bool {
 	if rr.heartbeats != nil && (!rr.heartbeats.Online(n.ID) || rr.heartbeats.SuspectedUnderReporting(n.ID)) {
 		return false
 	}
+	if rr.health != nil && !rr.health.Assignable(context.Background(), n.ID) {
+		return false
+	}
 	u.mu.Lock()
 	until, ok := u.suppressed[n.ID]
 	u.mu.Unlock()

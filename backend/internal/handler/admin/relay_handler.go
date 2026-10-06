@@ -77,6 +77,8 @@ type ActivateRelayNodeRequest struct {
 	PublicDomain       string `json:"public_domain" binding:"required"`
 	BandwidthLimitMbps int    `json:"bandwidth_limit_mbps" binding:"min=0"`
 	Region             string `json:"region"`
+	// IgnoreDNSMismatch：域名当前没有解析到这台的注册 IP 时，管理员确认后仍然激活。
+	IgnoreDNSMismatch bool `json:"ignore_dns_mismatch"`
 }
 
 // RevokeRelayNodeRequest 吊销节点证书的原因。
@@ -158,6 +160,8 @@ func relayError(c *gin.Context, err error) {
 		err = infraerrors.Conflict("RELAY_KEY_TARGET_UNAVAILABLE", err.Error())
 	case errors.Is(err, master.ErrNodesStillServing):
 		err = infraerrors.Conflict("RELAY_NODES_STILL_SERVING", err.Error())
+	case errors.Is(err, master.ErrDomainMismatch):
+		err = infraerrors.Conflict("RELAY_DOMAIN_MISMATCH", err.Error())
 	case errors.Is(err, master.ErrStatusConflict), errors.Is(err, master.ErrDomainTaken),
 		errors.Is(err, master.ErrKeyNotStaged), errors.Is(err, master.ErrKeyInUse),
 		errors.Is(err, master.ErrKeyRetireTooEarly), errors.Is(err, keystore.ErrAlreadyStaged):
@@ -265,12 +269,32 @@ func (h *RelayHandler) ActivateNode(c *gin.Context) {
 		BandwidthLimitMbps: req.BandwidthLimitMbps,
 		Region:             strings.TrimSpace(req.Region),
 		ActorUserID:        actor,
-	})
+	}, req.IgnoreDNSMismatch)
 	if err != nil {
 		relayError(c, err)
 		return
 	}
 	response.Success(c, nil)
+}
+
+// CheckNodeDomain 检查域名当前是否解析到这台节点的注册 IP（激活前核对）。
+// GET /api/v1/admin/relay/nodes/:id/domain-check?domain=relay1.example.com
+func (h *RelayHandler) CheckNodeDomain(c *gin.Context) {
+	id, ok := relayNodeID(c)
+	if !ok {
+		return
+	}
+	domain := strings.TrimSpace(c.Query("domain"))
+	if domain == "" {
+		response.BadRequest(c, "domain is required")
+		return
+	}
+	check, err := h.runtime.CheckNodeDomain(c.Request.Context(), id, domain)
+	if err != nil {
+		relayError(c, err)
+		return
+	}
+	response.Success(c, check)
 }
 
 // nodeAction 处理只需要节点 ID 和操作人的节点操作。

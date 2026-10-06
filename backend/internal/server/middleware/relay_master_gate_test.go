@@ -71,10 +71,11 @@ func TestIsRelayForwardingRoute(t *testing.T) {
 }
 
 type gateStub struct {
-	block   bool
-	busy    bool
-	key     []byte
-	address string
+	nodeHosts map[string]bool
+	block     bool
+	busy      bool
+	key       []byte
+	address   string
 }
 
 func (g gateStub) BlockMasterForwarding(context.Context) bool { return g.block }
@@ -83,6 +84,7 @@ func (g gateStub) VerifyHandoff(header, method, path string) bool {
 	return err == nil
 }
 func (g gateStub) AssignedAddress(context.Context, string) string { return g.address }
+func (g gateStub) IsNodeDomain(host string) bool                  { return g.nodeHosts[host] }
 func (g gateStub) AcquireMasterSlot(context.Context) (func(), bool) {
 	if g.busy {
 		return nil, false
@@ -150,4 +152,50 @@ func TestRelayMasterGateBlocksDirectForwardingAtRatioZero(t *testing.T) {
 	// 分配比例大于 0：照常。
 	SetRelayMasterGate(gateStub{block: false})
 	require.Equal(t, http.StatusOK, do(http.MethodPost, "/v1/responses", auth).Code)
+}
+
+// 设计 10.3：用已登记的从节点域名访问主节点（管理员把解析手动改到主节点）时只开放 API Key 网关接口，其余 404；
+// 主节点分配比例为 0 时整个拒绝；用主节点自己的域名访问不受影响。
+func TestNodeHostGuardOnlyServesTheGatewaySurface(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(RelayNodeHostGuardMiddleware())
+	ok := func(c *gin.Context) { c.String(http.StatusOK, "served") }
+	r.POST("/v1/responses", ok)
+	r.GET("/v1/models", ok)
+	r.POST("/chat/completions", ok)
+	r.GET("/api/v1/admin/users", ok)
+	r.POST("/api/v1/auth/login", ok)
+	r.GET("/api/v1/paw/relay/assignment", ok)
+	r.GET("/", ok)
+
+	do := func(host, method, path string) int {
+		req := httptest.NewRequest(method, path, nil)
+		req.Host = host
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w.Code
+	}
+	SetRelayMasterGate(gateStub{nodeHosts: map[string]bool{"relay1.example.com": true}})
+	t.Cleanup(func() { SetRelayMasterGate(nil) })
+
+	for _, path := range []string{"/v1/responses", "/chat/completions"} {
+		require.Equal(t, http.StatusOK, do("relay1.example.com", http.MethodPost, path), path)
+	}
+	require.Equal(t, http.StatusOK, do("relay1.example.com", http.MethodGet, "/v1/models"))
+	for _, tc := range [][2]string{{http.MethodGet, "/api/v1/admin/users"}, {http.MethodPost, "/api/v1/auth/login"},
+		{http.MethodGet, "/api/v1/paw/relay/assignment"}, {http.MethodGet, "/"}} {
+		require.Equal(t, http.StatusNotFound, do("relay1.example.com", tc[0], tc[1]), tc[1])
+	}
+	// 主节点自己的域名：什么都不拦。
+	require.Equal(t, http.StatusOK, do("api.example.com", http.MethodGet, "/api/v1/admin/users"))
+
+	// 比例为 0：从节点域名上的网关接口也拒绝（403）。
+	SetRelayMasterGate(gateStub{nodeHosts: map[string]bool{"relay1.example.com": true}, block: true})
+	require.Equal(t, http.StatusForbidden, do("relay1.example.com", http.MethodPost, "/v1/responses"))
+	require.Equal(t, http.StatusOK, do("api.example.com", http.MethodGet, "/api/v1/admin/users"))
+
+	// 没有主从分流（没有闸门）：什么都不做。
+	SetRelayMasterGate(nil)
+	require.Equal(t, http.StatusOK, do("relay1.example.com", http.MethodGet, "/api/v1/admin/users"))
 }

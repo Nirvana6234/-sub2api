@@ -88,6 +88,8 @@ type NodeHealth struct {
 	LoadPct float64                   `json:"load_percent"`
 	// ClockSkewMs 是从节点本机时间减主节点时间（毫秒，粗略值：单向延迟没扣）。
 	ClockSkewMs int64 `json:"clock_skew_ms"`
+	// External 是外部健康状态：探测、证书到期、域名当前解析到哪里、错误率降级（设计 10.3）。
+	External NodeHealthState `json:"external"`
 	// VoucherShortfall：宽限期之前写进从节点队列、至今没入账也不在队列里的扣费记录数。
 	VoucherShortfall int `json:"voucher_shortfall"`
 }

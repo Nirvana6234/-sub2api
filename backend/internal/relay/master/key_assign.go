@@ -39,6 +39,8 @@ type KeyAssignerDeps struct {
 	Config func(ctx context.Context) GeneralConfig
 	// Stats 返回每台节点上的 Key 数；nil 时按没有。
 	Stats KeyStatsFunc
+	// Assignable 报告节点在外部健康检查下现在能不能分配（探测握手成功过、没有对外不可达、没有被错误率降级，设计 10.3）；nil 时不看。
+	Assignable func(ctx context.Context, nodeID int64) bool
 	// Load 返回节点的负载（0~1，超过 1 也行）；节点 0 是主节点（带宽上限为 0）；nil 时都是 0。
 	Load func(nodeID int64, bandwidthMbps int) float64
 	// Rand 返回 [0,1) 的随机数；nil 用 math/rand。
@@ -117,7 +119,7 @@ func (a *KeyAssigner) Pick(ctx context.Context, exclude map[int64]bool) (int64, 
 
 	var pool, overloaded []*Node
 	for _, n := range nodes {
-		if exclude[n.ID] || !a.eligible(n, online) {
+		if exclude[n.ID] || !a.eligible(n, online) || (a.deps.Assignable != nil && !a.deps.Assignable(ctx, n.ID)) {
 			continue
 		}
 		if load(n.ID) > threshold {

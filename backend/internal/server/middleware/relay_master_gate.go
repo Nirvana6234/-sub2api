@@ -22,6 +22,8 @@ type RelayMasterGate interface {
 	VerifyHandoff(header, method, path string) bool
 	// AssignedAddress 返回这把 Key 分配的地址（提示用）；取不到时为空。
 	AssignedAddress(ctx context.Context, rawKey string) string
+	// IsNodeDomain 报告这个 Host 是不是已登记的从节点域名（激活或排空中的节点）。
+	IsNodeDomain(host string) bool
 	// AcquireMasterSlot 占主节点转发的一个并发名额（设计 10.5：主节点转发有上限）；ok 为 false 时回"服务繁忙"。
 	AcquireMasterSlot(ctx context.Context) (release func(), ok bool)
 }
@@ -37,6 +39,54 @@ func SetRelayMasterGate(g RelayMasterGate) {
 		return
 	}
 	activeRelayMasterGate.Store(&relayMasterGateHolder{g: g})
+}
+
+// apiKeyGatewayPrefixes、apiKeyGatewayRoots 是 API Key 网关接口的路径（设计 8.3：`/v1/*`、`/v1beta/*`、`/backend-api/codex/*`、
+// `/antigravity/*`、Seedance 的前缀和不带前缀的根路径别名）。从节点交给主节点的请求、从节点域名打到主节点的请求都只限这些。
+var (
+	apiKeyGatewayPrefixes = []string{"/v1/", "/v1beta/", "/backend-api/codex/", "/antigravity/", "/api/v3/", "/v3/"}
+	apiKeyGatewayRoots    = []string{"/responses", "/chat/completions", "/models", "/messages", "/images", "/videos", "/embeddings", "/tts", "/stt",
+		"/custom-voices", "/realtime", "/alpha/search", "/contents/generations/tasks", "/web_search", "/x_search", "/live", "/usage"}
+)
+
+// IsAPIKeyGatewayPath 报告一个请求路径属于 API Key 网关接口。
+func IsAPIKeyGatewayPath(path string) bool {
+	for _, p := range apiKeyGatewayPrefixes {
+		if strings.HasPrefix(path, p) {
+			return true
+		}
+	}
+	for _, root := range apiKeyGatewayRoots {
+		if path == root || strings.HasPrefix(path, root+"/") {
+			return true
+		}
+	}
+	return path == "/v1" || path == "/v1beta" || path == "/backend-api/codex" || path == "/antigravity"
+}
+
+// RelayNodeHostGuardMiddleware 挂在整个 HTTP 引擎上，在 RelayMasterGateMiddleware 之前：用已登记的从节点域名访问主节点
+// （管理员把某台的解析手动改到主节点时，设计 10.3）只开放 API Key 网关接口，票据接口、网页、后台一律 404；
+// 主节点分配比例为 0 时整个拒绝（403）。没有主从分流（没有闸门）时什么都不做。
+func RelayNodeHostGuardMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		h := activeRelayMasterGate.Load()
+		if h == nil || !h.g.IsNodeDomain(c.Request.Host) {
+			c.Next()
+			return
+		}
+		if !IsAPIKeyGatewayPath(c.Request.URL.Path) {
+			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": gin.H{"type": "not_found_error", "message": "Not found"}})
+			return
+		}
+		if h.g.BlockMasterForwarding(c.Request.Context()) {
+			MarkIngressRejected(c, IngressRejectMasterRelayDisabled)
+			WriteCapturedRejection(c, relayRejection(c.Request.Method, c.Request.URL.Path, http.StatusForbidden, "master_relay_disabled", "permission_error",
+				"This address is served by a relay node that is currently unavailable; please try again later or use the address shown for your API key"))
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
 }
 
 // RelayMasterGateMiddleware 挂在整个 HTTP 引擎上：只对"API Key 转发路由"生效（按路由模板判断，不认识的路由一律放行）。

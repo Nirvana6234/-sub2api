@@ -306,28 +306,9 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 	})
 }
 
-// handOffPrefixes 是可以交给主节点的路径前缀（设计 8.3 的 API Key 一行 + 8.4 的非转发接口）；
-// handOffRoots 是不带 /v1 前缀的根路径别名（本地路由同样注册的那些）。
-var (
-	handOffPrefixes = []string{"/v1/", "/v1beta/", "/backend-api/codex/", "/antigravity/", "/api/v3/", "/v3/"}
-	handOffRoots    = []string{"/responses", "/chat/completions", "/models", "/messages", "/images", "/videos", "/embeddings", "/tts", "/stt",
-		"/custom-voices", "/realtime", "/alpha/search", "/contents/generations/tasks", "/web_search", "/x_search", "/live", "/usage"}
-)
-
-// handOffAllowed 报告这个路径可以交给主节点转发或执行。
-func handOffAllowed(path string) bool {
-	for _, p := range handOffPrefixes {
-		if strings.HasPrefix(path, p) {
-			return true
-		}
-	}
-	for _, root := range handOffRoots {
-		if path == root || strings.HasPrefix(path, root+"/") {
-			return true
-		}
-	}
-	return path == "/v1" || path == "/v1beta" || path == "/backend-api/codex" || path == "/antigravity"
-}
+// handOffAllowed 报告这个路径可以交给主节点转发或执行（设计 8.3 的 API Key 一行 + 8.4 的非转发接口）：与主节点上从节点域名
+// 开放的接口是同一张表（middleware.IsAPIKeyGatewayPath）。
+func handOffAllowed(path string) bool { return middleware2.IsAPIKeyGatewayPath(path) }
 
 // grokCustomVoiceEndpoint 是自定义语音路径对应的入口名（本地 routes 同名函数）。
 func grokCustomVoiceEndpoint(c *gin.Context) string {

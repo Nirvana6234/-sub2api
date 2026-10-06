@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -70,6 +71,9 @@ type RuntimeDeps struct {
 	// ReservedSink：主从分流运行时把冻结额读取挂到余额预检上（service.BillingCacheService）。
 	ReservedSink ReservedBalanceSink
 	Notifier     Notifier
+	// Probe、Lookup：外部探测和域名解析（nil 用真实实现；测试里替换）。
+	Probe  ProbeFunc
+	Lookup LookupFunc
 	// UserAssignments 保存小白端用户的分配（relay_user_assignments）；nil 时用内存（测试）。
 	UserAssignments UserAssignmentStore
 	// Metrics 保存心跳的分钟汇总（relay_node_minute_metrics）；nil 时不落库。
@@ -112,6 +116,18 @@ type Runtime struct {
 
 	// addresses 是节点接入地址的短缓存（address.go）。
 	addresses addressCache
+	// domains 是已登记的从节点域名（激活或排空中的）的短缓存。
+	domains struct {
+		mu  sync.Mutex
+		set map[string]struct{}
+		at  time.Time
+	}
+	// masterIPCache 是主节点自己的 IP（域名解析检查用）。
+	masterIPCache struct {
+		mu  sync.Mutex
+		ips []string
+		at  time.Time
+	}
 	// host 是主节点自己的网卡速率和转发并发（主节点转发上限，设计 10.5）。
 	host hostLoad
 
@@ -149,6 +165,8 @@ type runningRelay struct {
 	logs *LogQuerier
 	// users 给小白端用户分配节点（设计 10.1）。
 	users *userAssigner
+	// health 是外部探测、域名解析检查、错误率降级（设计 10.3）。
+	health *HealthMonitor
 	// handoffKey 是"交给主节点转发"的标记密钥（handoff.go）。
 	handoffKey []byte
 }
@@ -478,6 +496,10 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 		version, _ := publisher.VersionFor(ctx, nodeID)
 		return version, nodes.Status(nodeID) == NodeDraining
 	})
+	health := NewHealthMonitor(HealthDeps{
+		Nodes: r.deps.Store.List, Config: r.cachedGeneralConfig, Heartbeats: heartbeats, Notifier: r.deps.Notifier,
+		Now: func() time.Time { return r.now() }, Probe: r.deps.Probe, Lookup: r.deps.Lookup, MasterIPs: r.masterIPs,
+	})
 	if quotas != nil {
 		control.AttachQuotas(quotas, recaller, server.Epoch())
 	}
@@ -523,7 +545,7 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 	}
 
 	runCtx, cancel := context.WithCancel(context.Background())
-	running := &runningRelay{server: server, listener: lis, nodes: nodes, publisher: publisher, events: events, invalidator: invalidator, cancel: cancel, ca: ca, keys: keys, signing: signing, revoker: revoker, quotas: quotas, recaller: recaller, quotaEvents: qEvents, selector: selector, handoffKey: handoffKey, heartbeats: heartbeats, logs: NewLogQuerier(events)}
+	running := &runningRelay{server: server, listener: lis, nodes: nodes, publisher: publisher, events: events, invalidator: invalidator, cancel: cancel, ca: ca, keys: keys, signing: signing, revoker: revoker, quotas: quotas, recaller: recaller, quotaEvents: qEvents, selector: selector, handoffKey: handoffKey, heartbeats: heartbeats, health: health, logs: NewLogQuerier(events)}
 	var unsubs []func()
 	if r.deps.Hub != nil {
 		unsubs = append(unsubs, r.deps.Hub.Subscribe(publisher.OnSettingsChanged))
@@ -534,7 +556,7 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 		// 新建的 Key 从此按分配规则定节点；开关关闭时摘下，Key 保持未分配。
 		running.keyAssigner = NewKeyAssigner(KeyAssignerDeps{
 			Nodes: r.deps.Store.List, Online: heartbeats.OnlineNodes, Config: r.cachedGeneralConfig,
-			Stats: r.deps.APIKeys.RelayKeyStats, Now: func() time.Time { return r.now() }, Load: heartbeats.Load,
+			Stats: r.deps.APIKeys.RelayKeyStats, Now: func() time.Time { return r.now() }, Load: heartbeats.Load, Assignable: health.Assignable,
 		})
 		r.deps.APIKeys.SetRelayKeyAssigner(running.keyAssigner)
 		unsubs = append(unsubs, func() { r.deps.APIKeys.SetRelayKeyAssigner(nil) })
@@ -590,6 +612,15 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 	})
 	running.goRun(func() { publisher.RunRecheck(runCtx) })
 	running.goRun(func() { heartbeats.Run(runCtx) })
+	if addr := strings.TrimSpace(cfg.Relay.DomainAskAddr); addr != "" {
+		ask, err := r.startDomainAsk(addr)
+		if err != nil {
+			slog.Warn("relay domain ask endpoint did not start", "addr", addr, "error", err)
+		} else {
+			unsubs = append(unsubs, func() { _ = ask.Close() })
+		}
+	}
+	running.goRun(func() { health.Run(runCtx) })
 	if runner, ok := r.deps.Notifier.(interface{ Run(context.Context) }); ok {
 		// 通知按合并窗口定时发出（同时发生的合成一条）。
 		running.goRun(func() { runner.Run(runCtx) })
@@ -801,13 +832,42 @@ func (r *Runtime) nodeOp(fn func(*Nodes) error) error {
 		return err
 	}
 	r.invalidateAddresses()
+	r.domains.mu.Lock()
+	r.domains.set = nil
+	r.domains.mu.Unlock()
 	rr.publisher.Trigger()
 	return nil
 }
 
-// ActivateNode 核对指纹后激活待激活节点（设计 11.2）。
-func (r *Runtime) ActivateNode(ctx context.Context, nodeID int64, fingerprint string, a Activation) error {
+// ErrDomainMismatch：填写的对外域名当前没有解析到这台的注册 IP（设计 11.1 第 5 步）。管理员确认后可以带 ignoreDNS 再激活。
+var ErrDomainMismatch = errors.New("the domain does not currently resolve to the IP this node registered from")
+
+// ActivateNode 核对指纹后激活待激活节点（设计 11.2）。激活前检查域名当前解析到这台的注册 IP：不一致时返回 ErrDomainMismatch，
+// 管理员确认继续（ignoreDNS）才激活（比如解析还没生效、先激活再改解析）。
+func (r *Runtime) ActivateNode(ctx context.Context, nodeID int64, fingerprint string, a Activation, ignoreDNS bool) error {
+	if !ignoreDNS {
+		check, err := r.CheckNodeDomain(ctx, nodeID, a.PublicDomain)
+		if err != nil {
+			return err
+		}
+		if check.State != DomainNode {
+			return fmt.Errorf("%w (resolves to: %s)", ErrDomainMismatch, strings.Join(check.Resolved, ", "))
+		}
+	}
 	return r.nodeOp(func(n *Nodes) error { return n.Activate(ctx, nodeID, fingerprint, a) })
+}
+
+// CheckNodeDomain 检查一个域名当前是否解析到这台节点的注册 IP（管理页填域名时和激活前用）。
+func (r *Runtime) CheckNodeDomain(ctx context.Context, nodeID int64, domain string) (DomainCheck, error) {
+	rr, err := r.runningRelay()
+	if err != nil {
+		return DomainCheck{}, err
+	}
+	n, err := r.deps.Store.GetByID(ctx, nodeID)
+	if err != nil {
+		return DomainCheck{}, err
+	}
+	return rr.health.CheckDomain(ctx, strings.ToLower(strings.TrimSpace(domain)), nodeIP(n)), nil
 }
 
 // RejectNode 拒绝待激活节点（这把长期密钥被拉黑）。
@@ -1106,10 +1166,83 @@ func (r *Runtime) cachedGeneralConfig(ctx context.Context) GeneralConfig {
 	return g
 }
 
+// IsNodeDomain 实现 middleware.RelayMasterGate：这个 Host 是不是已登记的从节点域名（Caddy 的 ask 接口和 Host 限制都用它）。
+func (r *Runtime) IsNodeDomain(host string) bool {
+	host = normalizeHost(host)
+	if host == "" {
+		return false
+	}
+	if _, err := r.runningRelay(); err != nil {
+		return false
+	}
+	r.domains.mu.Lock()
+	defer r.domains.mu.Unlock()
+	if r.domains.set == nil || r.now().Sub(r.domains.at) > 10*time.Second {
+		set := map[string]struct{}{}
+		if nodes, err := r.deps.Store.List(context.Background()); err == nil {
+			for _, n := range nodes {
+				if n.Status.Serving() && n.PublicDomain != "" {
+					set[strings.ToLower(n.PublicDomain)] = struct{}{}
+				}
+			}
+			r.domains.set, r.domains.at = set, r.now()
+		} else if r.domains.set == nil {
+			return false
+		}
+	}
+	_, ok := r.domains.set[host]
+	return ok
+}
+
+// normalizeHost 去掉端口和末尾的点并转小写。
+func normalizeHost(host string) string {
+	host = strings.TrimSpace(strings.ToLower(host))
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	return strings.TrimSuffix(host, ".")
+}
+
+// masterIPs 是主节点自己的地址（api_base_url 的主机解析出来的 IP，缓存 1 分钟）：域名解析到它说明管理员手动切到了主节点（设计 10.3）。
+func (r *Runtime) masterIPs(ctx context.Context) []string {
+	r.masterIPCache.mu.Lock()
+	defer r.masterIPCache.mu.Unlock()
+	if r.now().Sub(r.masterIPCache.at) < time.Minute && r.masterIPCache.ips != nil {
+		return r.masterIPCache.ips
+	}
+	v, err := r.deps.Settings.GetValue(ctx, service.SettingKeyAPIBaseURL)
+	if err != nil || strings.TrimSpace(v) == "" {
+		return nil
+	}
+	u, err := url.Parse(strings.TrimSpace(v))
+	if err != nil || u.Hostname() == "" {
+		return nil
+	}
+	lookup := r.deps.Lookup
+	if lookup == nil {
+		lookup = func(ctx context.Context, host string) ([]string, error) {
+			return net.DefaultResolver.LookupHost(ctx, host)
+		}
+	}
+	rctx, cancel := context.WithTimeout(ctx, domainResolveTimeout)
+	defer cancel()
+	ips, err := lookup(rctx, u.Hostname())
+	if err != nil {
+		return r.masterIPCache.ips
+	}
+	r.masterIPCache.ips, r.masterIPCache.at = ips, r.now()
+	return ips
+}
+
 // forgetHeartbeats 停用或吊销之后忘掉这台的心跳状态（它不是掉线，不发离线通知）。
 func (r *Runtime) forgetHeartbeats(nodeID int64) {
-	if rr, err := r.runningRelay(); err == nil && rr.heartbeats != nil {
-		rr.heartbeats.Forget(nodeID)
+	if rr, err := r.runningRelay(); err == nil {
+		if rr.heartbeats != nil {
+			rr.heartbeats.Forget(nodeID)
+		}
+		if rr.health != nil {
+			rr.health.Forget(nodeID)
+		}
 	}
 }
 
@@ -1128,7 +1261,9 @@ func (r *Runtime) NodeHealths(ctx context.Context) ([]NodeHealth, error) {
 		if !n.Status.Serving() {
 			continue
 		}
-		out = append(out, rr.heartbeats.Health(n.ID, n.BandwidthLimitMbps))
+		health := rr.heartbeats.Health(n.ID, n.BandwidthLimitMbps)
+		health.External = rr.health.State(n.ID)
+		out = append(out, health)
 	}
 	return out, nil
 }

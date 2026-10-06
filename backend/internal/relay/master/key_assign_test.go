@@ -18,6 +18,9 @@ func activeNode(id int64, domain string, bandwidth int) *master.Node {
 	return &master.Node{ID: id, Status: master.NodeActive, PublicDomain: domain, BandwidthLimitMbps: bandwidth}
 }
 
+// noProbe 关掉外部探测：这些用例里没有公网 HTTPS 可探，节点不用先握手成功才能分配。
+var noProbe = false
+
 type pickEnv struct {
 	nodes  []*master.Node
 	online []int64
@@ -230,7 +233,7 @@ func newKeyAdminHarness(t *testing.T, ratio int, keys ...*service.APIKey) *keyAd
 	repo := newMemKeyRepo(keys...)
 	apiKeys := service.NewAPIKeyService(repo, nil, nil, nil, nil, nil, nil)
 	h := newRuntimeWith(t, nil, func(d *master.RuntimeDeps) { d.APIKeys = apiKeys })
-	g := master.GeneralConfig{MasterRatioPercent: &ratio}
+	g := master.GeneralConfig{MasterRatioPercent: &ratio, ProbeEnabledFlag: &noProbe}
 	_, err := h.runtime.SetGeneralConfig(ctx, 1, g)
 	require.NoError(t, err)
 	st, err := h.runtime.SetEnabled(ctx, 1, true)

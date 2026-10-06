@@ -1,4 +1,4 @@
-# 主从节点架构设计（v0.28，2026-10-06）
+# 主从节点架构设计（v0.29，2026-10-06）
 
 > 状态：开发中（分支 `feat/master-relay-nodes`，进度见开发计划）。本文只记录当前结论；历史版本不再保留在正文里。开发计划见 `docs/MASTER_RELAY_NODES_PLAN.md`。
 > 代码引用按 2026-09-25 的 main（`c652d850`）核对；行号会漂移，引用处同时写了函数名，以函数名为准。
@@ -663,6 +663,15 @@ API Key 用户直接访问从节点，由从节点向主节点认证（8.2）。
 - **主节点接从节点域名**：解析改到主节点后，主节点前面的 Caddy 按需为这个域名申请证书（on_demand TLS）。申请前 Caddy 先问主节点"这是不是已登记的从节点域名"（这个查询接口只监听本机，不对外），不是就拒绝，防止被人拿任意域名刷证书。
   用从节点域名打到主节点的请求，按 Host 只开放 API Key 网关接口（8.3 的 API Key 一行），走 10.5 的主节点转发，计入转发上限，不受节点规则限制；主节点分配比例为 0 时拒绝；票据接口、网页、后台一律 404。
 - 小白端不需要这套：它连不上时向主节点要新分配（10.1）。
+
+**实现状态（v0.29，WP13）**（`master/health.go`、`master/domain_ask.go`、`nodegw/tlscert.go`、`middleware.RelayNodeHostGuardMiddleware`）：
+- **外部探测**：每分钟（通用配置 `probe_interval_seconds`）从主节点直连这台的 IP（连接 IP，没有时注册 IP）的 443 端口（`probe_port`），按它的域名做 TLS 握手（按系统根证书校验证书链和主机名）并请求 `/health`；连续 3 次失败标为对外不可达（停止分配、发 `node_unreachable`；握手错误是证书链 / 主机名 / 过期时发 `node_cert_failed`），成功后恢复并发恢复通知。**握手成功后才开始分配**（小白端和新 Key 都看 `HealthMonitor.Assignable`）；`probe_enabled=false` 关掉（本机开发、内网部署，关了就不看探测）。探测顺带读到证书到期时间，不到 7 天发 `node_cert_expiring`。
+- **错误率降级**：近 1 分钟请求数 ≥ 50、错误率 ≥ 30% 且比其他节点的中位数高 3 倍以上（没有对照时按绝对阈值；所有节点一样差不算某台的问题），连续 2 次检查如此才降级（停止分配并发 `node_degraded`）；错误率降到 15% 以下连续 2 次自动恢复。
+- **域名解析检查**：每分钟解析各从节点的域名，和这台的 IP 比较：解析到这台 / 解析到主节点（管理员手动切换，不告警）/ 解析到别处 / 解析失败（后两者发 `node_dns_mismatch`，改回后恢复通知）；管理页的节点健康接口带"当前解析到"。**激活前检查**：`GET /admin/relay/nodes/:id/domain-check?domain=`，激活时域名没有解析到这台的注册 IP 返回 409 `RELAY_DOMAIN_MISMATCH`（带解析结果），管理员确认后带 `ignore_dns_mismatch` 再激活。
+- **从节点 HTTPS**（`nodegw/tlscert.go`）：只开 HTTPS（`relay.node_tls_addr`，默认 `:443`；`relay.node_tls_disabled=true` 回到明文 HTTP，本机开发或前面有终止 TLS 的代理）；用 `autocert` 向 Let's Encrypt 申请自己域名的证书（TLS-ALPN-01，不需要 80 端口和域名服务商密钥），缓存在数据目录 `certs/`；`HostPolicy` 只放行自己当前的域名，别的 SNI 触发不了申请；激活后主动申请一次（失败按退避重试），不等第一个客户端握手；申请不到时管理员在本机放 `relay.node_cert_file` / `node_key_file`，优先使用，文件换了自动重读，坏文件保留已加载的证书。证书私钥只在从节点本机。
+- **主节点上的从节点域名**：①给 Caddy on_demand TLS 的 ask 接口 `relay.domain_ask_addr`（必须是回环地址，否则不启动；`GET /?domain=`，已登记的域名 200、其余 404）；②用已登记的从节点域名访问主节点时（解析被手动改到主节点）只开放 API Key 网关接口（和从节点转交同一张路径表 `middleware.IsAPIKeyGatewayPath`），其余 404，主节点分配比例为 0 时整个 403，不受节点规则限制，走 10.5 的主节点转发上限。
+- 测试：`TestExternalProbeGatesAssignmentAndDetectsUnreachableNodes`、`TestProbeDistinguishesCertificateProblemsAndWarnsBeforeExpiry`、`TestDomainResolutionStates`、`TestErrorRateDegradeAndRecovery`、`TestUnprobedNodesAreNotAssigned`、`TestProbeWithRootsSucceedsAgainstATrustedNode`、`TestRealProbeRejectsUntrustedCertificates`、`TestActivationChecksTheDomainResolvesToTheRegisteredIP`、`TestDomainAskEndpointOnlyApprovesRegisteredNodeDomains`、`TestNodeHostGuardOnlyServesTheGatewaySurface`、`TestCertProvider*`（域名限制、本机证书文件、完整握手）。
+- **没做**：真实 Let's Encrypt 签发没有自动化测试（需要公网和域名，放进 WP19 的真机验收）；"手动把某台的解析改到主节点后继续用"的完整流程要在有 Caddy 的部署上验证（WP18 的 Caddyfile）。
 
 ### 10.4 排空与手动调整
 

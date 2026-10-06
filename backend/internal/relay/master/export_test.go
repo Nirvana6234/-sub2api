@@ -37,3 +37,12 @@ func UserAssignmentStoreOf(r *Runtime) UserAssignmentStore {
 	}
 	return nil
 }
+
+// HealthOf 返回运行中的外部健康监控（测试里直接触发一轮检查）。
+func HealthOf(r *Runtime) *HealthMonitor {
+	rr, err := r.runningRelay()
+	if err != nil {
+		return nil
+	}
+	return rr.health
+}

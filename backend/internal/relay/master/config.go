@@ -90,6 +90,11 @@ type GeneralConfig struct {
 	AssignmentRefreshSeconds int `json:"assignment_refresh_seconds,omitempty"`
 	// MasterMaxConcurrent：主节点同时转发的请求数上限（0 = 不限，设计 10.5）；超过时回"服务繁忙"。
 	MasterMaxConcurrent int `json:"master_max_concurrent,omitempty"`
+	// ProbeEnabledFlag：外部探测（设计 10.3）；默认开。本机开发、内网部署没有公网 HTTPS 时关掉（关了就不看探测结果）。
+	ProbeEnabledFlag *bool `json:"probe_enabled,omitempty"`
+	// ProbeIntervalSeconds：外部探测和域名解析检查的间隔（默认 60）。ProbePort：探测的端口（默认 443）。
+	ProbeIntervalSeconds int `json:"probe_interval_seconds,omitempty"`
+	ProbePort            int `json:"probe_port,omitempty"`
 	// MasterMaxBandwidthMbps：主节点转发的带宽上限（0 = 不限）；负载 = 近 1 分钟收发速率较大者 ÷ 它，和并发占比取较大者。
 	MasterMaxBandwidthMbps int `json:"master_max_bandwidth_mbps,omitempty"`
 }
@@ -123,7 +128,21 @@ func (g GeneralConfig) WithDefaults() GeneralConfig {
 	if g.AssignmentRefreshSeconds <= 0 {
 		g.AssignmentRefreshSeconds = 60
 	}
+	if g.ProbeIntervalSeconds <= 0 {
+		g.ProbeIntervalSeconds = 60
+	}
 	return g
+}
+
+// ProbeEnabled 报告外部探测是否打开（默认开）。
+func (g GeneralConfig) ProbeEnabled() bool { return g.ProbeEnabledFlag == nil || *g.ProbeEnabledFlag }
+
+// ProbePortOrDefault 返回探测端口（默认 443）。
+func (g GeneralConfig) ProbePortOrDefault() int {
+	if g.ProbePort <= 0 {
+		return 443
+	}
+	return g.ProbePort
 }
 
 // Validate 检查取值范围。
@@ -136,6 +155,9 @@ func (g GeneralConfig) Validate() error {
 	}
 	if g.LoadThresholdPercent > 100 {
 		return fmt.Errorf("load_threshold_percent must be at most 100")
+	}
+	if g.ProbePort < 0 || g.ProbePort > 65535 || g.ProbeIntervalSeconds < 0 {
+		return fmt.Errorf("probe settings are out of range")
 	}
 	if g.MasterMaxConcurrent < 0 || g.MasterMaxBandwidthMbps < 0 {
 		return fmt.Errorf("master forwarding limits must not be negative")

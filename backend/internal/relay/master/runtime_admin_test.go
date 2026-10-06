@@ -132,7 +132,7 @@ func TestNodeAdminAuditCarriesSourceIP(t *testing.T) {
 	n, err := h.store.CreatePending(ctx, &master.Node{IdentityFingerprint: "fp", IdentityPublicKey: []byte{1}}, 20)
 	require.NoError(t, err)
 	require.NoError(t, h.runtime.Nodes().Load(ctx))
-	require.ErrorIs(t, h.runtime.ActivateNode(ctx, n.ID, "other", master.Activation{PublicDomain: "r.example.com", ActorUserID: 1}), master.ErrFingerprintMismatch)
+	require.ErrorIs(t, h.runtime.ActivateNode(ctx, n.ID, "other", master.Activation{PublicDomain: "r.example.com", ActorUserID: 1}, true), master.ErrFingerprintMismatch)
 	require.NoError(t, h.runtime.RejectNode(ctx, n.ID, 1))
 	audits := h.store.Audits()
 	last := audits[len(audits)-1]

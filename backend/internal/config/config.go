@@ -142,6 +142,21 @@ type RelayConfig struct {
 	NodeDataDir string `mapstructure:"node_data_dir"`
 	// NodeDisplayName 是注册时上报的名称（管理员激活时可改）。
 	NodeDisplayName string `mapstructure:"node_display_name"`
+
+	// DomainAskAddr 是主节点给 Caddy on_demand TLS 的 ask 接口监听地址（设计 10.3）：Caddy 为一个域名申请证书前先问主节点
+	// "这是不是已登记的从节点域名"。只能监听本机回环地址（127.0.0.1 / ::1），不对外；空时不提供。
+	DomainAskAddr string `mapstructure:"domain_ask_addr"`
+
+	// NodeTLSAddr 是从节点对外 HTTPS 的监听地址（默认 ":443"，ACME TLS-ALPN-01 要用 443）；NodeTLSDisabled 为 true 时
+	// 从节点按 server.host/server.port 提供明文 HTTP（本机开发，或前面已经有终止 TLS 的代理）。
+	NodeTLSAddr     string `mapstructure:"node_tls_addr"`
+	NodeTLSDisabled bool   `mapstructure:"node_tls_disabled"`
+	// NodeACMEEmail 是向 Let's Encrypt 注册用的邮箱（可空）；NodeACMEDirectoryURL 为空时用 Let's Encrypt 正式环境。
+	NodeACMEEmail        string `mapstructure:"node_acme_email"`
+	NodeACMEDirectoryURL string `mapstructure:"node_acme_directory_url"`
+	// NodeCertFile、NodeKeyFile：申请不到证书时，管理员在从节点本机放置的证书和私钥文件（PEM）；配置后优先用它们。
+	NodeCertFile string `mapstructure:"node_cert_file"`
+	NodeKeyFile  string `mapstructure:"node_key_file"`
 }
 
 type FallbackPoolAlertConfig struct {
@@ -2662,6 +2677,13 @@ func setEnvReachableDefaults() {
 	viper.SetDefault("relay.node_root_fingerprints", []string{})
 	viper.SetDefault("relay.node_data_dir", "")
 	viper.SetDefault("relay.node_display_name", "")
+	viper.SetDefault("relay.domain_ask_addr", "")
+	viper.SetDefault("relay.node_tls_addr", ":443")
+	viper.SetDefault("relay.node_tls_disabled", false)
+	viper.SetDefault("relay.node_acme_email", "")
+	viper.SetDefault("relay.node_acme_directory_url", "")
+	viper.SetDefault("relay.node_cert_file", "")
+	viper.SetDefault("relay.node_key_file", "")
 	_ = viper.BindEnv("relay.node_role", "NODE_ROLE", "RELAY_NODE_ROLE")
 
 	viper.SetDefault("gateway.forced_codex_instructions_template_file", "")

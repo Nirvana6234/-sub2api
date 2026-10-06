@@ -299,8 +299,25 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 		ConnState:         stats.ConnState,
 	}
 	errc := make(chan error, 1)
-	go func() { errc <- srv.ListenAndServe() }()
-	slog.Info("relay node serving", "addr", srv.Addr, "node_id", id.NodeID())
+	if rc.NodeTLSDisabled {
+		go func() { errc <- srv.ListenAndServe() }()
+	} else {
+		// 对外只开 HTTPS（设计 15.2）：每台自己向 Let's Encrypt 申请自己域名的证书（TLS-ALPN-01，443 端口），或用本机放置的证书文件。
+		certs := newCertProvider(rc, dataDir, func() string {
+			if nc, ok := cache.Node(); ok {
+				return nc.PublicDomain
+			}
+			return ""
+		})
+		srv.Addr = strings.TrimSpace(rc.NodeTLSAddr)
+		if srv.Addr == "" {
+			srv.Addr = ":443"
+		}
+		srv.TLSConfig = certs.tlsConfig()
+		go certs.warm(runCtx)
+		go func() { errc <- srv.ListenAndServeTLS("", "") }()
+	}
+	slog.Info("relay node serving", "addr", srv.Addr, "tls", !rc.NodeTLSDisabled, "node_id", id.NodeID())
 
 	select {
 	case err := <-errc:

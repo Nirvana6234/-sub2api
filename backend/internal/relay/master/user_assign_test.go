@@ -40,7 +40,7 @@ func newUserAssignHarness(t *testing.T, ratio int) *userAssignHarness {
 		users.users[i] = &service.User{ID: i, Email: "u@test", Status: service.StatusActive, PasswordHash: "h", TokenVersion: 3}
 	}
 	h := newRuntimeWith(t, nil, func(d *master.RuntimeDeps) { d.Users, d.Notifier = users, n })
-	_, err := h.runtime.SetGeneralConfig(ctx, 1, master.GeneralConfig{MasterRatioPercent: &ratio})
+	_, err := h.runtime.SetGeneralConfig(ctx, 1, master.GeneralConfig{MasterRatioPercent: &ratio, ProbeEnabledFlag: &noProbe})
 	require.NoError(t, err)
 	st, err := h.runtime.SetEnabled(ctx, 1, true)
 	require.NoError(t, err)
