@@ -10,6 +10,8 @@ const (
 	AuditKeyActivated         = "key_activated"
 	AuditKeyRetired           = "key_retired"
 	AuditQuotaReclaimed       = "quota_reclaimed"
+	AuditKeysAssigned         = "keys_assigned"
+	AuditKeysReassigned       = "keys_reassigned"
 )
 
 type sourceIPKey struct{}

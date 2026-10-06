@@ -57,7 +57,8 @@ func (r *apiKeyRepository) Create(ctx context.Context, key *service.APIKey) erro
 		SetNillableExpiresAt(key.ExpiresAt).
 		SetRateLimit5h(key.RateLimit5h).
 		SetRateLimit1d(key.RateLimit1d).
-		SetRateLimit7d(key.RateLimit7d)
+		SetRateLimit7d(key.RateLimit7d).
+		SetNillableRelayNodeID(key.RelayNodeID)
 
 	if len(key.IPWhitelist) > 0 {
 		builder.SetIPWhitelist(key.IPWhitelist)
@@ -1234,4 +1235,98 @@ func derefString(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+// ---- 主从分流：Key 的节点分配（service.APIKeyRelayRepository）----
+
+var _ service.APIKeyRelayRepository = (*apiKeyRepository)(nil)
+
+func (r *apiKeyRepository) AssignRelayNode(ctx context.Context, ids []int64, nodeID int64, changedAt *time.Time) ([]string, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	client := clientFromContext(ctx, r.client)
+	rows, err := client.APIKey.Query().
+		Where(apikey.IDIn(ids...), apikey.DeletedAtIsNil()).
+		Select(apikey.FieldID, apikey.FieldKey).
+		All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	found := make([]int64, 0, len(rows))
+	keys := make([]string, 0, len(rows))
+	for _, row := range rows {
+		found = append(found, row.ID)
+		keys = append(keys, row.Key)
+	}
+	update := client.APIKey.Update().
+		Where(apikey.IDIn(found...), apikey.DeletedAtIsNil()).
+		SetRelayNodeID(nodeID)
+	if changedAt != nil {
+		update.SetRelayNodeChangedAt(*changedAt)
+	}
+	if _, err := update.Save(ctx); err != nil {
+		return nil, err
+	}
+	return keys, nil
+}
+
+func (r *apiKeyRepository) ListRelayKeyIDs(ctx context.Context, filter service.RelayKeyFilter, afterID int64, limit int) ([]int64, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	q := r.activeQuery().Where(apikey.IDGT(afterID))
+	if filter.Unassigned {
+		q = q.Where(apikey.RelayNodeIDIsNil())
+	} else {
+		q = q.Where(apikey.RelayNodeIDEQ(filter.NodeID))
+	}
+	return q.Order(dbent.Asc(apikey.FieldID)).Limit(limit).IDs(ctx)
+}
+
+func (r *apiKeyRepository) CountRelayKeys(ctx context.Context, filter service.RelayKeyFilter) (int64, error) {
+	q := r.activeQuery()
+	if filter.Unassigned {
+		q = q.Where(apikey.RelayNodeIDIsNil())
+	} else {
+		q = q.Where(apikey.RelayNodeIDEQ(filter.NodeID))
+	}
+	n, err := q.Count(ctx)
+	return int64(n), err
+}
+
+func (r *apiKeyRepository) RelayKeyStats(ctx context.Context, activeSince time.Time) (map[int64]service.RelayKeyStat, error) {
+	type row struct {
+		NodeID int64 `json:"relay_node_id"`
+		Count  int64 `json:"count"`
+	}
+	count := func(q *dbent.APIKeyQuery) ([]row, error) {
+		var rows []row
+		err := q.Where(apikey.RelayNodeIDNotNil()).
+			GroupBy(apikey.FieldRelayNodeID).
+			Aggregate(dbent.As(dbent.Count(), "count")).
+			Scan(ctx, &rows)
+		return rows, err
+	}
+	total, err := count(r.activeQuery())
+	if err != nil {
+		return nil, err
+	}
+	active, err := count(r.activeQuery().Where(apikey.LastUsedAtGT(activeSince)))
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int64]service.RelayKeyStat, len(total))
+	for _, t := range total {
+		out[t.NodeID] = service.RelayKeyStat{Total: t.Count}
+	}
+	for _, a := range active {
+		s := out[a.NodeID]
+		s.Active = a.Count
+		out[a.NodeID] = s
+	}
+	return out, nil
 }

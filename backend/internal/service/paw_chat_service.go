@@ -96,9 +96,10 @@ func (s APIKeyPawChatKeySource) ResolvePawGroupKey(ctx context.Context, userID, 
 	if key == nil {
 		groupIDs := pawFallbackAutoGroupIDs(groups)
 		key, err = s.Service.Create(ctx, userID, CreateAPIKeyRequest{
-			Name:         PlaygroundChatAPIKeyName,
-			AutoGroup:    true,
-			AutoGroupIDs: groupIDs,
+			Name:                PlaygroundChatAPIKeyName,
+			SkipRelayAssignment: true,
+			AutoGroup:           true,
+			AutoGroupIDs:        groupIDs,
 		})
 		if err != nil {
 			return nil, nil, nil, err

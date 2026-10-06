@@ -1212,3 +1212,34 @@ func (m *memGroups) GetByIDLite(_ context.Context, id int64) (*service.Group, er
 	}
 	return nil, errors.New("no group")
 }
+
+// AssignRelayNode 让 fakeKeys 支持节点重新分配（service.APIKeyRelayRepository）。
+func (r fakeKeys) AssignRelayNode(_ context.Context, ids []int64, nodeID int64, changedAt *time.Time) ([]string, error) {
+	var out []string
+	for _, k := range r.keys {
+		for _, id := range ids {
+			if k.ID == id {
+				n := nodeID
+				k.RelayNodeID = &n
+				if changedAt != nil {
+					at := *changedAt
+					k.RelayNodeChangedAt = &at
+				}
+				out = append(out, k.Key)
+			}
+		}
+	}
+	return out, nil
+}
+
+func (r fakeKeys) ListRelayKeyIDs(context.Context, service.RelayKeyFilter, int64, int) ([]int64, error) {
+	return nil, nil
+}
+
+func (r fakeKeys) CountRelayKeys(context.Context, service.RelayKeyFilter) (int64, error) {
+	return 0, nil
+}
+
+func (r fakeKeys) RelayKeyStats(context.Context, time.Time) (map[int64]service.RelayKeyStat, error) {
+	return nil, nil
+}

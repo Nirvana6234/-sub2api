@@ -130,6 +130,8 @@ type runningRelay struct {
 	recaller    *EventRecaller
 	quotaEvents *quotaEvents
 	selector    Selector
+	// keyAssigner 给新建的 API Key 选节点（设计 10.2）。
+	keyAssigner *KeyAssigner
 }
 
 // NewRuntime 创建运行时（不启动任何东西）。
@@ -479,6 +481,13 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 	if r.deps.APIKeys != nil {
 		r.deps.APIKeys.SetAuthCacheInvalidationListener(invalidator.APIKeyHash)
 		unsubs = append(unsubs, func() { r.deps.APIKeys.SetAuthCacheInvalidationListener(nil) })
+		// 新建的 Key 从此按分配规则定节点；开关关闭时摘下，Key 保持未分配。
+		running.keyAssigner = NewKeyAssigner(KeyAssignerDeps{
+			Nodes: r.deps.Store.List, Online: events.ConnectedNodes, Config: r.cachedGeneralConfig,
+			Stats: r.deps.APIKeys.RelayKeyStats, Now: r.now,
+		})
+		r.deps.APIKeys.SetRelayKeyAssigner(running.keyAssigner)
+		unsubs = append(unsubs, func() { r.deps.APIKeys.SetRelayKeyAssigner(nil) })
 	}
 	if r.deps.AccessChanges != nil {
 		unsubs = append(unsubs, r.deps.AccessChanges.Subscribe(invalidator.OnAccessChange))

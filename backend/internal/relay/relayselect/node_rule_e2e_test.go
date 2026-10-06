@@ -73,3 +73,38 @@ func TestNodeRuleRejectsKeysAssignedElsewhere(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, body)
 	e.world.waitReleased(t)
 }
+
+// 重新分配（设计 10.2）：管理员把 Key 从 A 移到 B 后，下一个请求就在 A 上被拒、在 B 上放行，不用等缓存过期——
+// 节点规则读的是鉴权缓存里的快照，重新分配作废了这把 Key 的缓存。
+func TestReassignedKeyMovesBetweenNodesImmediately(t *testing.T) {
+	e := startE2E(t)
+	e.world.sel.env.GeneralConfig = func(context.Context) master.GeneralConfig {
+		return master.GeneralConfig{APIKeyNodeRule: master.APIKeyNodeRuleAssigned}.WithDefaults()
+	}
+	key := e.world.keys.keys["sk-a"]
+	const responses = `{"model":"gpt-5","input":"hi"}`
+	apiKeys := e.world.sel.deps.APIKeys
+
+	moved, err := apiKeys.AssignRelayNode(context.Background(), []int64{key.ID}, e.nodeID, false)
+	require.NoError(t, err)
+	require.Equal(t, 1, moved)
+	require.Nil(t, key.RelayNodeChangedAt, "the first assignment does not raise the address-changed notice")
+	status, body := e.post(t, "/v1/responses", "sk-a", responses)
+	require.Equal(t, http.StatusOK, status, body)
+	e.world.waitReleased(t)
+
+	// 移到别的节点：这台上马上拒绝，不用等缓存过期。
+	_, err = apiKeys.AssignRelayNode(context.Background(), []int64{key.ID}, e.nodeID+1, true)
+	require.NoError(t, err)
+	require.NotNil(t, key.RelayNodeChangedAt, "a reassignment raises it")
+	status, body = e.post(t, "/v1/responses", "sk-a", responses)
+	require.Equal(t, http.StatusForbidden, status, body)
+	require.Equal(t, "api_key_node_mismatch", gjson.Get(body, "error.code").String(), body)
+
+	// 移回来：马上又接。
+	_, err = apiKeys.AssignRelayNode(context.Background(), []int64{key.ID}, e.nodeID, true)
+	require.NoError(t, err)
+	status, body = e.post(t, "/v1/responses", "sk-a", responses)
+	require.Equal(t, http.StatusOK, status, body)
+	e.world.waitReleased(t)
+}

@@ -276,14 +276,17 @@ func invalidateAutoGroupSelectionsForGroup(ctx context.Context, invalidator APIK
 
 // CreateAPIKeyRequest 创建API Key请求
 type CreateAPIKeyRequest struct {
-	Name              string   `json:"name"`
-	GroupID           *int64   `json:"group_id"`
-	AutoGroup         bool     `json:"auto_group"`
-	AutoGroupStrategy string   `json:"auto_group_strategy"`
-	AutoGroupIDs      []int64  `json:"auto_group_ids"`
-	CustomKey         *string  `json:"custom_key"`   // 可选的自定义key
-	IPWhitelist       []string `json:"ip_whitelist"` // IP 白名单
-	IPBlacklist       []string `json:"ip_blacklist"` // IP 黑名单
+	Name              string  `json:"name"`
+	GroupID           *int64  `json:"group_id"`
+	AutoGroup         bool    `json:"auto_group"`
+	AutoGroupStrategy string  `json:"auto_group_strategy"`
+	AutoGroupIDs      []int64 `json:"auto_group_ids"`
+	CustomKey         *string `json:"custom_key"` // 可选的自定义key
+	// SkipRelayAssignment 不给这把 Key 分配节点：Playground 内部 Key 只经小白端票据在分配给用户的节点上用，
+	// 不走 API Key 的节点分配和规则（设计 8.1）。
+	SkipRelayAssignment bool     `json:"-"`
+	IPWhitelist         []string `json:"ip_whitelist"` // IP 白名单
+	IPBlacklist         []string `json:"ip_blacklist"` // IP 黑名单
 
 	// Quota fields
 	Quota         float64 `json:"quota"`           // Quota limit in USD (0 = unlimited)
@@ -397,7 +400,9 @@ type APIKeyService struct {
 	// 主从分流的主节点据此通知从节点清掉自己的 Key 缓存（docs/MASTER_RELAY_NODES.md 6、8.2）。
 	authInvalidationListener atomic.Pointer[func(cacheKey string)]
 	// accessChanges 在按用户、分组作废时发布改动（主从分流推给从节点，见 AccessChangeHub）。
-	accessChanges             atomic.Pointer[AccessChangeHub]
+	accessChanges atomic.Pointer[AccessChangeHub]
+	// relayAssigner 给新建的 Key 选节点（主从分流开关打开时才有，见 api_key_relay.go）。
+	relayAssigner             atomic.Pointer[relayKeyAssignerHolder]
 	authCfg                   apiKeyAuthCacheConfig
 	authGroup                 singleflight.Group
 	authLookupSlots           chan struct{}
@@ -763,6 +768,9 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 		apiKey.ExpiresAt = &expiresAt
 	}
 
+	if !req.SkipRelayAssignment {
+		s.assignNewKeyRelayNode(ctx, apiKey)
+	}
 	if err := s.apiKeyRepo.Create(ctx, apiKey); err != nil {
 		return nil, fmt.Errorf("create api key: %w", err)
 	}
@@ -810,20 +818,22 @@ func (s *APIKeyService) EnsurePlaygroundAPIKeys(ctx context.Context, userID int6
 
 	if _, exists := created[PlaygroundChatAPIKeyName]; !exists && len(chatGroupIDs) > 0 {
 		if _, err := s.Create(ctx, userID, CreateAPIKeyRequest{
-			Name:              PlaygroundChatAPIKeyName,
-			AutoGroup:         true,
-			AutoGroupStrategy: normalizeAutoGroupStrategy(defaults.ChatStrategy),
-			AutoGroupIDs:      chatGroupIDs,
+			Name:                PlaygroundChatAPIKeyName,
+			SkipRelayAssignment: true,
+			AutoGroup:           true,
+			AutoGroupStrategy:   normalizeAutoGroupStrategy(defaults.ChatStrategy),
+			AutoGroupIDs:        chatGroupIDs,
 		}); err != nil {
 			return fmt.Errorf("create playground chat api key: %w", err)
 		}
 	}
 	if _, exists := created[PlaygroundImageAPIKeyName]; !exists && len(imageGroupIDs) > 0 {
 		if _, err := s.Create(ctx, userID, CreateAPIKeyRequest{
-			Name:              PlaygroundImageAPIKeyName,
-			AutoGroup:         true,
-			AutoGroupStrategy: normalizeAutoGroupStrategy(defaults.ImageStrategy),
-			AutoGroupIDs:      imageGroupIDs,
+			Name:                PlaygroundImageAPIKeyName,
+			SkipRelayAssignment: true,
+			AutoGroup:           true,
+			AutoGroupStrategy:   normalizeAutoGroupStrategy(defaults.ImageStrategy),
+			AutoGroupIDs:        imageGroupIDs,
 		}); err != nil {
 			return fmt.Errorf("create playground image api key: %w", err)
 		}

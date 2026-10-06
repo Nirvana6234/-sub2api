@@ -40,13 +40,23 @@ func testRelayConfig(t *testing.T) *config.Config {
 
 func newRuntime(t *testing.T, mutate func(*config.Config)) *runtimeHarness {
 	t.Helper()
+	return newRuntimeWith(t, mutate, nil)
+}
+
+// newRuntimeWith 同 newRuntime；deps 非 nil 时再改运行时的依赖（如挂上 API Key 服务）。
+func newRuntimeWith(t *testing.T, mutate func(*config.Config), deps func(*master.RuntimeDeps)) *runtimeHarness {
+	t.Helper()
 	cfg := testRelayConfig(t)
 	if mutate != nil {
 		mutate(cfg)
 	}
 	hub := service.NewSettingChangeHub()
 	h := &runtimeHarness{cfg: cfg, store: master.NewMemoryStore(), settings: service.NewObservedSettingRepository(newMemSettings(), hub)}
-	h.runtime = master.NewRuntime(master.RuntimeDeps{Config: cfg, Store: h.store, Settings: h.settings, Hub: hub})
+	rd := master.RuntimeDeps{Config: cfg, Store: h.store, Settings: h.settings, Hub: hub}
+	if deps != nil {
+		deps(&rd)
+	}
+	h.runtime = master.NewRuntime(rd)
 	t.Cleanup(h.runtime.Close)
 	h.runtime.Init(context.Background())
 	return h
