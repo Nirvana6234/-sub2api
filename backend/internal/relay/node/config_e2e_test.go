@@ -6,7 +6,9 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
+	"encoding/json"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -479,4 +481,65 @@ func TestHeartbeatReachesTheMasterAndMeasuresTheClock(t *testing.T) {
 	draining = true
 	require.NoError(t, beater.Beat(context.Background()))
 	require.True(t, beater.Draining())
+}
+
+// 日志和记录查询（设计 12.3）：主节点经事件流把查询转给节点，节点本机执行后经同一条流回结果；结果按不可信输入处理
+// （限条数、限长度、必须是 JSON 对象）；没有事件连接的节点查询报不可用。
+func TestLogQueryTravelsOverTheEventStream(t *testing.T) {
+	m := startMaster(t)
+	n := startNode(t, m)
+	querier := master.NewLogQuerier(m.events)
+
+	// 还没有事件连接：查不了。
+	_, err := querier.Query(context.Background(), m.nodeID, &relayv1.LogQuery{Kind: "app"})
+	require.ErrorIs(t, err, master.ErrLogQueryNodeUnavailable)
+
+	outbox := node.NewEventOutbox(0)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	long := `{"ts":1,"message":"` + strings.Repeat("x", 70<<10) + `"}`
+	go node.RunEvents(ctx, n.client, n.syncer, node.EventHandlers{Outbox: outbox, OnLogQuery: func(q *relayv1.LogQuery) {
+		res := &relayv1.LogQueryResult{QueryId: q.GetQueryId(), Truncated: true}
+		switch q.GetKind() {
+		case "slow":
+			return // 不回：主节点超时
+		case "broken":
+			res.Error = "log store could not be read"
+		default:
+			for _, rec := range []string{`{"ts":30,"message":"newest"}`, `not json`, `["array"]`, long, `{"ts":20,"message":"older"}`, `{"ts":10,"message":"oldest"}`} {
+				res.Records = append(res.Records, []byte(rec))
+			}
+		}
+		outbox.Enqueue(&relayv1.NodeEnvelope{Body: &relayv1.NodeEnvelope_LogResult{LogResult: res}})
+	}})
+	require.Eventually(t, func() bool { return m.events.IsConnected(m.nodeID) }, 5*time.Second, 10*time.Millisecond)
+
+	qctx, qcancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer qcancel()
+	res, err := querier.Query(qctx, m.nodeID, &relayv1.LogQuery{Kind: "app", Limit: 2})
+	require.NoError(t, err)
+	require.Equal(t, master.LogStatusOK, res.Status)
+	require.Len(t, res.Records, 2, "capped at the requested limit")
+	require.Equal(t, 3, res.Skipped, "not JSON, not an object, and over-long records are dropped")
+	require.True(t, res.Truncated)
+	require.JSONEq(t, `{"ts":30,"message":"newest"}`, string(res.Records[0]))
+
+	res, err = querier.Query(qctx, m.nodeID, &relayv1.LogQuery{Kind: "broken"})
+	require.NoError(t, err)
+	require.Equal(t, master.LogStatusError, res.Status)
+	require.Equal(t, "log store could not be read", res.Error)
+
+	short, scancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer scancel()
+	_, err = querier.Query(short, m.nodeID, &relayv1.LogQuery{Kind: "slow"})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+
+	// 多台节点的结果按时间新到旧合并，每条带节点。
+	merged := master.MergeLogResults([]master.NodeLogResult{
+		{NodeID: 1, NodeName: "a", Records: []json.RawMessage{json.RawMessage(`{"ts":30}`), json.RawMessage(`{"ts":10}`)}},
+		{NodeID: 2, NodeName: "b", Records: []json.RawMessage{json.RawMessage(`{"ts":20}`)}},
+	}, 2)
+	require.Len(t, merged, 2)
+	require.Equal(t, int64(1), merged[0].NodeID)
+	require.Equal(t, int64(2), merged[1].NodeID)
 }

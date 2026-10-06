@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/lib/pq"
 	gocache "github.com/patrickmn/go-cache"
 )
 
@@ -210,6 +212,39 @@ func appendNativeCompactionV2WhereCondition(conditions []string, args []any, nat
 	conditions = append(conditions, fmt.Sprintf("%s = $%d", column, len(args)+1))
 	args = append(args, *nativeCompactionV2)
 	return conditions, args
+}
+
+// appendUsageLogNodeWhereCondition 按转发节点过滤（主从分流）：0 = 主节点自己转发的（node_id 为 NULL），> 0 = 这台从节点。
+func appendUsageLogNodeWhereCondition(conditions []string, args []any, nodeID *int64) ([]string, []any) {
+	if nodeID == nil {
+		return conditions, args
+	}
+	if *nodeID <= 0 {
+		return append(conditions, "node_id IS NULL"), args
+	}
+	return append(conditions, fmt.Sprintf("node_id = $%d", len(args)+1)), append(args, *nodeID)
+}
+
+// LoadUsageLogNodeIDs 返回这些使用记录的转发节点（只含从节点上报的；主节点自己转发的没有条目）。
+// 单独一次查询：列表主查询的列保持不变，后台列表的"节点"列用它补上。
+func (r *usageLogRepository) LoadUsageLogNodeIDs(ctx context.Context, ids []int64) (map[int64]int64, error) {
+	out := map[int64]int64{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := r.sql.QueryContext(ctx, `SELECT id, node_id FROM usage_logs WHERE id = ANY($1) AND node_id IS NOT NULL`, pq.Array(ids))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id, node int64
+		if err := rows.Scan(&id, &node); err != nil {
+			return nil, err
+		}
+		out[id] = node
+	}
+	return out, rows.Err()
 }
 
 func appendUsageLogAccountSourceWhereCondition(conditions []string, args []any, accountSource string) ([]string, []any) {

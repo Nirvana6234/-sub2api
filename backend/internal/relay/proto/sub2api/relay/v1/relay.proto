@@ -304,7 +304,49 @@ message NodeEnvelope {
     EventPing ping = 10;
     SelectionRelease selection_release = 11;
     AccountEvent account_event = 12;
+    // 日志和记录查询的结果（设计 12.3）。
+    LogQueryResult log_result = 13;
   }
+}
+
+// 日志和记录查询（设计第 12 节）：日志和记录留在从节点本机，后台查看时主节点把查询条件转给对应节点，
+// 结果只显示、不入库。经事件流往返（从节点只需要向主节点发起连接），按 query_id 对应。
+message LogQuery {
+  string query_id = 1;
+  // "app"（程序日志）、"error"（请求错误日志）、"moderation"（审核记录）。
+  string kind = 2;
+  int64 from_unix_ms = 3;
+  int64 to_unix_ms = 4;
+  // 只要这个时间之前的（翻页游标：上一页最后一条的时间）。
+  int64 before_unix_ms = 5;
+  string level = 6;
+  string component = 7;
+  string request_id = 8;
+  int64 user_id = 9;
+  int64 api_key_id = 10;
+  int64 account_id = 11;
+  string platform = 12;
+  string model = 13;
+  string keyword = 14;
+  // 最多返回几条（从节点再按自己的上限裁一次）。
+  int32 limit = 15;
+  // 最多返回多少字节（所有记录加起来）。
+  int32 max_bytes = 16;
+  // 审核记录按页翻（页码从 1 起）。
+  int32 page = 17;
+  // 审核记录的结果筛选（"hit" / "pass"，空为全部）。
+  string result = 18;
+}
+
+message LogQueryResult {
+  string query_id = 1;
+  // 每条一个 JSON 对象，新到旧；主节点按不可信输入处理（限条数、限长度，只当纯文本显示）。
+  repeated bytes records = 2;
+  // 因为条数或大小上限被截断（还有更多）。
+  bool truncated = 3;
+  // 扫描量超过上限没扫完（时间范围太大，请缩小）。
+  bool scan_limited = 4;
+  string error = 5;
 }
 
 message FetchConfigRequest {
@@ -358,6 +400,7 @@ message MasterEnvelope {
     TicketRevocations ticket_revocations = 13;
     QuotaRecall quota_recall = 14;
     FlaggedHashes flagged_hashes = 15;
+    LogQuery log_query = 16;
   }
 }
 

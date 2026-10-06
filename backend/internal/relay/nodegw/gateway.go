@@ -29,6 +29,8 @@ type GatewayDeps struct {
 	TLSProfiles *service.TLSFingerprintProfileService
 	// Moderation 是本机的安全审计（NewModeration）；nil 表示不审计（测试）。
 	Moderation *Moderation
+	// Ops 是本机的运维服务（只写请求错误日志到本机存储，NewNodeOpsRepository）；nil 表示不记错误日志（测试）。
+	Ops *service.OpsService
 }
 
 // NewOpenAIHandler 组装从节点上的 OpenAI 处理函数：与单机同一个处理函数和转发服务，换上远程选号、
@@ -53,7 +55,7 @@ func NewOpenAIHandler(d GatewayDeps) *handler.OpenAIGatewayHandler {
 	if d.Moderation != nil {
 		moderation = d.Moderation.Service
 	}
-	h := handler.NewOpenAIGatewayHandler(gw, nil, nil, nil, nil, d.ErrorPassthrough, moderation, nil, d.Config)
+	h := handler.NewOpenAIGatewayHandler(gw, nil, nil, nil, nil, d.ErrorPassthrough, moderation, d.Ops, d.Config)
 	h.SetRelayDispatcher(d.Dispatcher)
 	if d.Moderation != nil {
 		// 安全审计在从节点本地判定（设计 3.4），与单机同一个协调器。
@@ -286,6 +288,11 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 		ro.paw.register(r, h, gh, d, cfg)
 	}
 	r.NoRoute(bodyLimit, func(c *gin.Context) {
+		if !handOffAllowed(c.Request.URL.Path) {
+			// 设计 8.3：从节点只开放网关接口，登录态接口、管理后台、支付、网页、小白端的配置接口一律 404，不转给主节点。
+			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": gin.H{"type": "not_found_error", "message": "Not found"}})
+			return
+		}
 		body, err := readBody(c)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": "Failed to read request body"}})
@@ -297,6 +304,29 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 		}
 		d.deps.HandOff(c, body)
 	})
+}
+
+// handOffPrefixes 是可以交给主节点的路径前缀（设计 8.3 的 API Key 一行 + 8.4 的非转发接口）；
+// handOffRoots 是不带 /v1 前缀的根路径别名（本地路由同样注册的那些）。
+var (
+	handOffPrefixes = []string{"/v1/", "/v1beta/", "/backend-api/codex/", "/antigravity/", "/api/v3/", "/v3/"}
+	handOffRoots    = []string{"/responses", "/chat/completions", "/models", "/messages", "/images", "/videos", "/embeddings", "/tts", "/stt",
+		"/custom-voices", "/realtime", "/alpha/search", "/contents/generations/tasks", "/web_search", "/x_search", "/live", "/usage"}
+)
+
+// handOffAllowed 报告这个路径可以交给主节点转发或执行。
+func handOffAllowed(path string) bool {
+	for _, p := range handOffPrefixes {
+		if strings.HasPrefix(path, p) {
+			return true
+		}
+	}
+	for _, root := range handOffRoots {
+		if path == root || strings.HasPrefix(path, root+"/") {
+			return true
+		}
+	}
+	return path == "/v1" || path == "/v1beta" || path == "/backend-api/codex" || path == "/antigravity"
 }
 
 // grokCustomVoiceEndpoint 是自定义语音路径对应的入口名（本地 routes 同名函数）。

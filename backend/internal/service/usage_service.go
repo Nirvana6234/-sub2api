@@ -441,7 +441,35 @@ func (s *UsageService) ListWithFilters(ctx context.Context, params pagination.Pa
 	if err != nil {
 		return nil, nil, fmt.Errorf("list usage logs with filters: %w", err)
 	}
+	s.attachNodeIDs(ctx, logs)
 	return logs, result, nil
+}
+
+// usageLogNodeLoader 是使用记录仓储里读转发节点的可选部分（主从分流，设计 12.4：后台使用记录的"节点"列）。
+type usageLogNodeLoader interface {
+	LoadUsageLogNodeIDs(ctx context.Context, ids []int64) (map[int64]int64, error)
+}
+
+// attachNodeIDs 给这一页记录补上转发节点；失败只是没有"节点"列的值，不影响列表。
+func (s *UsageService) attachNodeIDs(ctx context.Context, logs []UsageLog) {
+	loader, ok := s.usageRepo.(usageLogNodeLoader)
+	if !ok || len(logs) == 0 {
+		return
+	}
+	ids := make([]int64, 0, len(logs))
+	for i := range logs {
+		ids = append(ids, logs[i].ID)
+	}
+	nodes, err := loader.LoadUsageLogNodeIDs(ctx, ids)
+	if err != nil {
+		return
+	}
+	for i := range logs {
+		if n, ok := nodes[logs[i].ID]; ok {
+			node := n
+			logs[i].NodeID = &node
+		}
+	}
 }
 
 // GetGlobalStats returns global usage stats for a time range.

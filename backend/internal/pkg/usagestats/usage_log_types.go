@@ -286,8 +286,10 @@ type UsageLogFilters struct {
 	UpstreamModelMismatch *bool
 	// AccountSource filters usage_logs.account_source (pool / own / room); empty means all.
 	AccountSource string
-	StartTime     *time.Time
-	EndTime       *time.Time
+	// NodeID filters usage_logs.node_id (主从分流): 0 = 主节点自己转发的（列为 NULL），> 0 = 这台从节点上报的；nil 不限。
+	NodeID    *int64
+	StartTime *time.Time
+	EndTime   *time.Time
 	// ExactTotal requests exact COUNT(*) for pagination. Default false for fast large-table paging.
 	ExactTotal bool
 }

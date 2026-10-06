@@ -18,6 +18,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/model"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/relay/accountcodec"
 	"github.com/Wei-Shaw/sub2api/internal/relay/identity"
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
@@ -146,6 +147,14 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 		return fmt.Errorf("relay node records: %w", err)
 	}
 	defer func() { _ = records.Close() }()
+	// 本机日志和记录（设计第 12 节）：程序日志、请求错误日志写进本机存储，后台查询由主节点转来执行。
+	stats := NewStats()
+	logSink := NewLogSink(records, stats)
+	logger.SetSink(logSink)
+	defer func() {
+		logger.SetSink(nil)
+		logSink.Close()
+	}()
 	var d *Dispatcher
 	sender := node.NewUsageSender(wal, node.NewBillingClient(client), node.UsageSenderOptions{
 		OnResult: func(rec *relayv1.UsageRecord, res *relayv1.UsageRecordResult) { d.OnUsageResult(rec, res) },
@@ -171,8 +180,13 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 	defer stop()
 	moderation = NewModeration(runCtx, cache, records, client)
 	go webSearchQuota.Run(runCtx)
+	logQueries := NewLogQueryExecutor(records, moderation.Records)
 	go node.RunEvents(runCtx, client, syncer, node.EventHandlers{
-		Outbox:          outbox,
+		Outbox: outbox,
+		// 后台按节点查日志和记录（设计 12.3）：本机执行，结果经事件流回主节点。
+		OnLogQuery: func(q *relayv1.LogQuery) {
+			outbox.Enqueue(&relayv1.NodeEnvelope{Body: &relayv1.NodeEnvelope_LogResult{LogResult: logQueries.Execute(runCtx, q)}})
+		},
 		OnFlaggedHashes: moderation.Hashes.Apply,
 		// 主节点的缓存作废推送（新建 Key、Key 改动）：清 Key 负缓存。
 		OnInvalidation: d.OnInvalidation,
@@ -191,7 +205,6 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 	})
 	go sender.Run(runCtx)
 	// 心跳（设计 11.4）：每 5 秒一次，带本机负载与计数。
-	stats := NewStats()
 	heartbeater = node.NewHeartbeater(client, func() *relayv1.HeartbeatRequest {
 		req := stats.Snapshot(runCtx, dataDir)
 		req.ProgramVersion, req.ConfigVersion = opts.ProgramVersion, cache.Version()
@@ -202,6 +215,7 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 			req.BillingOldestAtUnixMs = oldest.UnixMilli()
 		}
 		req.InflightSelectionIds = d.InflightSelections()
+		req.LogBacklog, req.LogDropped = int32(logSink.Backlog()), logSink.Dropped()
 		return req
 	}, time.Duration(cache.GeneralHeartbeatSeconds())*time.Second)
 	go heartbeater.Run(runCtx)
@@ -225,6 +239,7 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 		ErrorPassthrough: errorPassthrough,
 		TLSProfiles:      tlsProfiles,
 		Moderation:       moderation,
+		Ops:              service.NewOpsService(NewNodeOpsRepository(records, stats), cache, cfg, nil, nil, nil, nil, nil, nil, nil, nil),
 	}
 	h := NewOpenAIHandler(gatewayDeps)
 	gh := NewAnthropicHandler(gatewayDeps, AnthropicDeps{
@@ -239,6 +254,8 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "node_id": id.NodeID()})
 	})
 	r.Use(stats.Middleware())
+	// 请求错误日志写本机（设计 12.2）；成功的请求不产生任何日志流量。
+	r.Use(handler.OpsErrorLoggerMiddleware(gatewayDeps.Ops))
 	r.Use(func(c *gin.Context) {
 		// 主从时钟偏差超过上限时不接新请求（设计第 19 节）：扣费凭证和额度到期都按时间判断。
 		if !heartbeater.ClockHealthy() {

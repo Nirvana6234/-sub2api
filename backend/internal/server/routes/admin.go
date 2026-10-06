@@ -959,6 +959,9 @@ func registerRelayRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth
 
 		relay.GET("/nodes", h.Admin.Relay.ListNodes)
 		relay.GET("/nodes/health", h.Admin.Relay.NodeHealths)
+		// 日志和记录留在从节点，后台按节点查（设计第 12 节）：结果只显示、不入库。
+		relay.GET("/logs", h.Admin.Relay.AllNodeLogs)
+		relay.GET("/nodes/:id/logs", h.Admin.Relay.NodeLogs)
 		relay.POST("/nodes/reject-pending", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.RejectAllPendingNodes)
 		relay.POST("/nodes/:id/activate", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.ActivateNode)
 		relay.POST("/nodes/:id/reject", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.RejectNode)

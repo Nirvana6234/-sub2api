@@ -708,6 +708,9 @@ type AdminUsageLog struct {
 	UpstreamResponseModel *string `json:"upstream_response_model,omitempty"`
 	// UpstreamModelMismatch is nil when the upstream did not declare a model.
 	UpstreamModelMismatch *bool `json:"upstream_model_mismatch,omitempty"`
+	// NodeID 是转发这次请求的从节点（主从分流）；缺省表示主节点自己转发的。后台使用记录的"节点"列用它，
+	// 不叫"来源"：已有"账号来源"（account_source）。
+	NodeID *int64 `json:"node_id,omitempty"`
 
 	// ChannelID 渠道 ID
 	ChannelID *int64 `json:"channel_id,omitempty"`

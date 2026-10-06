@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -170,6 +171,11 @@ func (h *UsageHandler) List(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
+	nodeFilter, err := parseUsageNodeFilter(c.Query("node_id"))
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
 
 	// Parse date range
 	var startTime, endTime *time.Time
@@ -215,6 +221,7 @@ func (h *UsageHandler) List(c *gin.Context) {
 		BillingMode:           billingMode,
 		UpstreamModelMismatch: upstreamModelMismatch,
 		AccountSource:         accountSource,
+		NodeID:                nodeFilter,
 		StartTime:             startTime,
 		EndTime:               endTime,
 		ExactTotal:            exactTotal,
@@ -352,6 +359,11 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
+	nodeFilter, err := parseUsageNodeFilter(c.Query("node_id"))
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
 
 	// Parse date range
 	userTZ := c.Query("timezone")
@@ -405,6 +417,7 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 		BillingMode:           billingMode,
 		UpstreamModelMismatch: upstreamModelMismatch,
 		AccountSource:         accountSource,
+		NodeID:                nodeFilter,
 		StartTime:             &startTime,
 		EndTime:               &endTime,
 	}
@@ -1016,4 +1029,21 @@ func (h *UsageHandler) RevokeLatencyCompensation(c *gin.Context) {
 		"[LatencyCompensation] 撤回完成: operator=%d revoked=%d skipped=%d total=%.8f",
 		subject.UserID, len(result.RevokedUsers), len(result.SkippedUsers), result.TotalRevoked)
 	response.Success(c, result)
+}
+
+// parseUsageNodeFilter 解析按节点筛选（主从分流，设计 12.4）："master" 或 0 是主节点自己转发的，正整数是那台从节点，空是不限。
+func parseUsageNodeFilter(raw string) (*int64, error) {
+	raw = strings.TrimSpace(raw)
+	switch strings.ToLower(raw) {
+	case "":
+		return nil, nil
+	case "master":
+		zero := int64(0)
+		return &zero, nil
+	}
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || id < 0 {
+		return nil, errors.New("Invalid node_id, use master or a node ID")
+	}
+	return &id, nil
 }

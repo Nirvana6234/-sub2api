@@ -172,3 +172,42 @@ func TestHandOffCarriesTheNodesOwnMarker(t *testing.T) {
 	do("forged-by-client")
 	require.Empty(t, gotMarker)
 }
+
+// 设计 8.3：从节点只开放网关接口；登录态接口、管理后台、支付、网页、小白端配置接口一律 404，不转给主节点。
+func TestHandOffOnlyServesTheGatewaySurface(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	reached := map[string]bool{}
+	master := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached[r.URL.Path] = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(master.Close)
+	masterURL, err := url.Parse(master.URL)
+	require.NoError(t, err)
+	d := NewDispatcher(Deps{HandOff: NewHandOff(masterURL, http.DefaultTransport)})
+	cfg := &config.Config{}
+	cfg.Gateway.MaxBodySize = 1 << 20
+	r := NewEngine()
+	RegisterRoutes(r, nil, d, cfg, nil)
+	node := httptest.NewServer(r)
+	t.Cleanup(node.Close)
+
+	status := func(method, path string) int {
+		req, err := http.NewRequest(method, node.URL+path, strings.NewReader("{}"))
+		require.NoError(t, err)
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	for _, path := range []string{"/v1/usage", "/v1/models", "/v1beta/models", "/v1/live", "/backend-api/codex/models", "/antigravity/v1/usage",
+		"/models", "/usage", "/api/v3/contents/generations/tasks/x", "/v1/relay/assignment", "/v1/images/batches"} {
+		require.Equal(t, http.StatusNoContent, status(http.MethodPost, path), path)
+		require.True(t, reached[path], path)
+	}
+	for _, path := range []string{"/", "/api/v1/admin/users", "/api/v1/auth/login", "/api/v1/paw/config", "/api/v1/paw/auto-group", "/api/v1/playground/chat",
+		"/api/v1/trial/x", "/api/v1/remote/ws", "/admin", "/setup", "/assets/app.js", "/v10/x", "/responsesx", "/payment/notify", "/api/v1/user/profile"} {
+		require.Equal(t, http.StatusNotFound, status(http.MethodPost, path), path)
+		require.False(t, reached[path], "%s must never reach the master", path)
+	}
+}

@@ -19,12 +19,15 @@ type Moderation struct {
 	Prompt      *securityaudit.PromptService
 	Coordinator *securityaudit.Coordinator
 	Hashes      *node.FlaggedHashReplica
+	// Records 是本机的审核记录仓储（日志查询用，设计第 12 节）。
+	Records *node.ModerationStore
 }
 
 // NewModeration 组装从节点上的安全审计。ctx 结束时后台的违规上报重试停止。
 func NewModeration(ctx context.Context, cache *node.ConfigCache, store *nodestore.Store, client *transport.Client) *Moderation {
 	hashes := node.NewFlaggedHashReplica(client)
-	svc := service.NewContentModerationService(cache, node.NewModerationStore(store), hashes, nil, nil, node.NewSealedProxies(cache), nil, nil)
+	records := node.NewModerationStore(store)
+	svc := service.NewContentModerationService(cache, records, hashes, nil, nil, node.NewSealedProxies(cache), nil, nil)
 	svc.SetAccountActions(node.NewRemoteModerationActions(ctx, client))
 	prompt := securityaudit.NewPromptServiceWith(securityaudit.NewRelayConfigStore(node.PromptAuditConfig(cache)),
 		node.NewPromptAuditStore(store), node.NewPromptPayloads(), securityaudit.NewOpenAICompatibleScanner(), securityaudit.NewAtomicMetrics())
@@ -36,5 +39,6 @@ func NewModeration(ctx context.Context, cache *node.ConfigCache, store *nodestor
 		Prompt:      prompt,
 		Coordinator: securityaudit.NewCoordinator(securityaudit.NewLegacyModerationAdapter(svc), prompt),
 		Hashes:      hashes,
+		Records:     records,
 	}
 }

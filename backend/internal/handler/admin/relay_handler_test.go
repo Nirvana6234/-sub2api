@@ -13,6 +13,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/relay/keystore"
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
+	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -158,4 +159,44 @@ func TestRelayHandlerWhileRelayIsOff(t *testing.T) {
 	require.Equal(t, master.AuditGeneralConfigChanged, last.Action)
 	require.Equal(t, int64(42), last.ActorUserID)
 	require.Equal(t, "203.0.113.7", last.SourceIP)
+}
+
+func TestLogQueryFromRequestValidatesAndCapsTheQuery(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	parse := func(rawQuery string) (*relayv1.LogQuery, int) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet, "/logs?"+rawQuery, nil)
+		q, ok := logQueryFromRequest(c)
+		if !ok {
+			return nil, w.Code
+		}
+		return q, http.StatusOK
+	}
+
+	q, code := parse("kind=error&level=P1&request_id=r1&user_id=7&api_key_id=3&account_id=9&platform=openai&model=gpt-5&keyword=boom&from=1000&to=2000&before=1500&limit=10")
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "error", q.Kind)
+	require.EqualValues(t, 7, q.UserId)
+	require.EqualValues(t, 1500, q.BeforeUnixMs)
+	require.EqualValues(t, 10, q.Limit)
+	require.EqualValues(t, master.MaxLogBytes, q.MaxBytes)
+
+	q, _ = parse("")
+	require.Equal(t, "app", q.Kind)
+	require.EqualValues(t, 50, q.Limit)
+
+	q, _ = parse("limit=100000")
+	require.EqualValues(t, master.MaxLogRecords, q.Limit, "the page size is capped")
+
+	// 节点详情页"最近日志"：程序日志、200 行、256KB。
+	q, _ = parse("kind=error&tail=1&limit=5")
+	require.Equal(t, "app", q.Kind)
+	require.EqualValues(t, master.RecentLogRecords, q.Limit)
+	require.EqualValues(t, master.RecentLogBytes, q.MaxBytes)
+
+	for _, bad := range []string{"kind=secrets", "user_id=abc", "limit=0", "from=-1", "page=x"} {
+		_, code := parse(bad)
+		require.Equal(t, http.StatusBadRequest, code, bad)
+	}
 }

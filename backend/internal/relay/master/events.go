@@ -22,6 +22,8 @@ type EventHub struct {
 	sessions map[int64]map[*eventSession]struct{}
 	// OnNodeEvent 处理从节点发来的事件（心跳等，后续工作包接入）。
 	OnNodeEvent func(nodeID int64, env *relayv1.NodeEnvelope)
+	// OnLogResult 处理从节点回的日志查询结果（LogQuerier）。
+	OnLogResult func(nodeID int64, r *relayv1.LogQueryResult)
 	// OnConnect 在一条事件流建立时调用（例如立刻告诉它当前配置版本）。
 	OnConnect func(nodeID int64)
 }
@@ -64,6 +66,12 @@ func (h *EventHub) Stream(stream relayv1.RelayEvents_StreamServer) error {
 				h.trySend(sess, &relayv1.MasterEnvelope{Seq: env.Seq, Body: &relayv1.MasterEnvelope_Ping{Ping: ping}})
 				continue
 			}
+			if lr := env.GetLogResult(); lr != nil {
+				if h.OnLogResult != nil {
+					h.OnLogResult(peer.NodeID, lr)
+				}
+				continue
+			}
 			if h.OnNodeEvent != nil {
 				h.OnNodeEvent(peer.NodeID, env)
 			}
@@ -104,6 +112,13 @@ func (h *EventHub) SendTo(nodeID int64, env *relayv1.MasterEnvelope) {
 	for _, sess := range targets {
 		h.trySend(sess, env)
 	}
+}
+
+// IsConnected 报告节点现在有没有事件流。
+func (h *EventHub) IsConnected(nodeID int64) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.sessions[nodeID]) > 0
 }
 
 // ConnectedNodes 返回当前有事件流的节点。

@@ -10,6 +10,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/relay/keystore"
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
+	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/gin-gonic/gin"
 )
@@ -471,6 +472,96 @@ func (h *RelayHandler) NodeHealths(c *gin.Context) {
 		return
 	}
 	response.Success(c, healths)
+}
+
+// logQueryFromRequest 把查询参数转成转给节点的日志查询（设计 12.3）：时间、级别、组件、请求 ID、用户、Key、账号、平台、模型、
+// 关键字、翻页游标 before；条数和大小有上限，tail=1 时是节点详情页的"最近日志"（200 行、256KB）。
+func logQueryFromRequest(c *gin.Context) (*relayv1.LogQuery, bool) {
+	q := &relayv1.LogQuery{
+		Kind: c.DefaultQuery("kind", "app"), Level: c.Query("level"), Component: c.Query("component"), RequestId: c.Query("request_id"),
+		Platform: c.Query("platform"), Model: c.Query("model"), Keyword: c.Query("keyword"), Result: c.Query("result"),
+	}
+	switch q.Kind {
+	case "app", "error", "moderation":
+	default:
+		response.BadRequest(c, "Invalid kind (app, error or moderation)")
+		return nil, false
+	}
+	ints := map[string]*int64{"from": &q.FromUnixMs, "to": &q.ToUnixMs, "before": &q.BeforeUnixMs, "user_id": &q.UserId, "api_key_id": &q.ApiKeyId, "account_id": &q.AccountId}
+	for name, dst := range ints {
+		if raw := c.Query(name); raw != "" {
+			v, err := strconv.ParseInt(raw, 10, 64)
+			if err != nil || v < 0 {
+				response.BadRequest(c, "Invalid "+name)
+				return nil, false
+			}
+			*dst = v
+		}
+	}
+	limit, page := 50, 1
+	if raw := c.Query("limit"); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v < 1 {
+			response.BadRequest(c, "Invalid limit")
+			return nil, false
+		}
+		limit = v
+	}
+	if raw := c.Query("page"); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v < 1 {
+			response.BadRequest(c, "Invalid page")
+			return nil, false
+		}
+		page = v
+	}
+	if limit > master.MaxLogRecords {
+		limit = master.MaxLogRecords
+	}
+	q.Limit, q.Page, q.MaxBytes = int32(limit), int32(page), master.MaxLogBytes
+	if c.Query("tail") == "1" {
+		q.Kind, q.Limit, q.MaxBytes = "app", master.RecentLogRecords, master.RecentLogBytes
+	}
+	return q, true
+}
+
+// NodeLogs 查某台节点的日志和记录；GET /api/v1/admin/relay/nodes/:id/logs。
+func (h *RelayHandler) NodeLogs(c *gin.Context) {
+	id, ok := relayNodeID(c)
+	if !ok {
+		return
+	}
+	h.queryLogs(c, []int64{id})
+}
+
+// AllNodeLogs 并发查全部在服务的节点并按时间合并；GET /api/v1/admin/relay/logs。
+// 可用 node_ids=1,2 限定几台。离线、超时的节点在结果里标出。
+func (h *RelayHandler) AllNodeLogs(c *gin.Context) {
+	var ids []int64
+	if raw := strings.TrimSpace(c.Query("node_ids")); raw != "" {
+		for _, part := range strings.Split(raw, ",") {
+			id, err := strconv.ParseInt(strings.TrimSpace(part), 10, 64)
+			if err != nil || id <= 0 {
+				response.BadRequest(c, "Invalid node_ids")
+				return
+			}
+			ids = append(ids, id)
+		}
+	}
+	h.queryLogs(c, ids)
+}
+
+func (h *RelayHandler) queryLogs(c *gin.Context, ids []int64) {
+	q, ok := logQueryFromRequest(c)
+	if !ok {
+		return
+	}
+	results, err := h.runtime.QueryNodeLogs(c.Request.Context(), ids, q)
+	if err != nil {
+		relayError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"nodes": results, "records": master.MergeLogResults(results, int(q.Limit))})
 }
 
 // ReplaceNodeRequest：换机器时新节点的 ID 和它在本机打印的指纹。

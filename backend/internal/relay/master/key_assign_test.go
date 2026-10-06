@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
+	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
 	"github.com/Wei-Shaw/sub2api/internal/relay/sign"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
@@ -446,4 +447,23 @@ func TestRuntimeReplacesANodeKeepingDomainAndKeys(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, master.NodeDisabled, oldGot.Status)
 	require.Empty(t, oldGot.PublicDomain)
+}
+
+// 后台按节点查日志：离线的节点（没有事件连接）在结果里标出，不影响别的节点；不认识的节点报错。
+func TestRuntimeLogQueryMarksOfflineNodes(t *testing.T) {
+	ctx := context.Background()
+	h := newKeyAdminHarness(t, 10)
+	results, err := h.runtime.QueryNodeLogs(ctx, nil, &relayv1.LogQuery{Kind: "app"})
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+	for _, r := range results {
+		require.Equal(t, master.LogStatusOffline, r.Status)
+		require.Empty(t, r.Records)
+	}
+	results, err = h.runtime.QueryNodeLogs(ctx, []int64{h.nodes[1].ID}, &relayv1.LogQuery{Kind: "app"})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, h.nodes[1].ID, results[0].NodeID)
+	_, err = h.runtime.QueryNodeLogs(ctx, []int64{999}, &relayv1.LogQuery{Kind: "app"})
+	require.ErrorIs(t, err, master.ErrNodeNotFound)
 }

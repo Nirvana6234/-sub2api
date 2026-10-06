@@ -21,6 +21,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/relay/transport"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"google.golang.org/protobuf/proto"
 )
 
 // RuntimeState 是主节点主从通信的运行状态，管理页展示。
@@ -140,6 +141,8 @@ type runningRelay struct {
 	keyAssigner *KeyAssigner
 	// heartbeats 记各节点的心跳、在线状态、负载（设计 11.4）。
 	heartbeats *Heartbeats
+	// logs 把后台的日志和记录查询转给从节点（设计第 12 节）。
+	logs *LogQuerier
 	// handoffKey 是"交给主节点转发"的标记密钥（handoff.go）。
 	handoffKey []byte
 }
@@ -501,7 +504,7 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 	}
 
 	runCtx, cancel := context.WithCancel(context.Background())
-	running := &runningRelay{server: server, listener: lis, nodes: nodes, publisher: publisher, events: events, invalidator: invalidator, cancel: cancel, ca: ca, keys: keys, signing: signing, revoker: revoker, quotas: quotas, recaller: recaller, quotaEvents: qEvents, selector: selector, handoffKey: handoffKey, heartbeats: heartbeats}
+	running := &runningRelay{server: server, listener: lis, nodes: nodes, publisher: publisher, events: events, invalidator: invalidator, cancel: cancel, ca: ca, keys: keys, signing: signing, revoker: revoker, quotas: quotas, recaller: recaller, quotaEvents: qEvents, selector: selector, handoffKey: handoffKey, heartbeats: heartbeats, logs: NewLogQuerier(events)}
 	var unsubs []func()
 	if r.deps.Hub != nil {
 		unsubs = append(unsubs, r.deps.Hub.Subscribe(publisher.OnSettingsChanged))
@@ -1086,4 +1089,60 @@ func (r *Runtime) NodeHealths(ctx context.Context) ([]NodeHealth, error) {
 		out = append(out, rr.heartbeats.Health(n.ID, n.BandwidthLimitMbps))
 	}
 	return out, nil
+}
+
+// QueryNodeLogs 把日志和记录查询转给节点并收集结果（设计 12.3）：nodeIDs 为空时问全部在服务的节点，并发问、每台有超时；
+// 离线、超时、出错的节点在结果里标出，不影响别的节点。结果只返回、不入库。
+func (r *Runtime) QueryNodeLogs(ctx context.Context, nodeIDs []int64, template *relayv1.LogQuery) ([]NodeLogResult, error) {
+	rr, err := r.runningRelay()
+	if err != nil {
+		return nil, err
+	}
+	nodes, err := r.deps.Store.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	byID := map[int64]*Node{}
+	var targets []*Node
+	for _, n := range nodes {
+		byID[n.ID] = n
+		if n.Status.Serving() {
+			targets = append(targets, n)
+		}
+	}
+	if len(nodeIDs) > 0 {
+		targets = targets[:0]
+		for _, id := range nodeIDs {
+			n, ok := byID[id]
+			if !ok {
+				return nil, ErrNodeNotFound
+			}
+			targets = append(targets, n)
+		}
+	}
+	results := make([]NodeLogResult, len(targets))
+	var wg sync.WaitGroup
+	for i, n := range targets {
+		i, n := i, n
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			qctx, cancel := context.WithTimeout(ctx, LogQueryTimeout)
+			defer cancel()
+			res, err := rr.logs.Query(qctx, n.ID, proto.Clone(template).(*relayv1.LogQuery))
+			switch {
+			case err == nil:
+				results[i] = *res
+			case errors.Is(err, ErrLogQueryNodeUnavailable):
+				results[i] = NodeLogResult{NodeID: n.ID, Status: LogStatusOffline, Records: []json.RawMessage{}}
+			case errors.Is(err, context.DeadlineExceeded):
+				results[i] = NodeLogResult{NodeID: n.ID, Status: LogStatusTimeout, Records: []json.RawMessage{}}
+			default:
+				results[i] = NodeLogResult{NodeID: n.ID, Status: LogStatusError, Error: "query failed", Records: []json.RawMessage{}}
+			}
+			results[i].NodeName = n.Name
+		}()
+	}
+	wg.Wait()
+	return results, nil
 }
