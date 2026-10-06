@@ -4,10 +4,17 @@ import { useI18n } from 'vue-i18n'
 import { useClipboard } from '@/composables/useClipboard'
 import type { CustomEndpoint } from '@/types'
 
-const props = defineProps<{
-  apiBaseUrl: string
-  customEndpoints: CustomEndpoint[]
-}>()
+const props = withDefaults(
+  defineProps<{
+    apiBaseUrl: string
+    customEndpoints: CustomEndpoint[]
+    /** Addresses of the relay nodes the user's keys are pinned to (master/relay-node split). */
+    relayEndpoints?: string[]
+    /** False when every key is on a relay node, so the site-wide address would mislead. */
+    showDefault?: boolean
+  }>(),
+  { relayEndpoints: () => [], showDefault: true }
+)
 
 const { t } = useI18n()
 const { copyToClipboard } = useClipboard()
@@ -17,12 +24,20 @@ let copiedResetTimer: number | undefined
 
 const allEndpoints = computed(() => {
   const items: Array<{ name: string; endpoint: string; description: string; isDefault: boolean }> = []
-  if (props.apiBaseUrl) {
+  if (props.apiBaseUrl && props.showDefault) {
     items.push({
       name: t('keys.endpoints.title'),
       endpoint: props.apiBaseUrl,
       description: '',
       isDefault: true,
+    })
+  }
+  for (const endpoint of props.relayEndpoints) {
+    items.push({
+      name: t('keys.endpoints.relayNode'),
+      endpoint,
+      description: t('keys.endpoints.relayNodeHint'),
+      isDefault: false,
     })
   }
   for (const ep of props.customEndpoints) {

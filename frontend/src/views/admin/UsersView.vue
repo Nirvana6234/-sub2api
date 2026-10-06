@@ -732,6 +732,17 @@
                 {{ t('admin.users.platformQuota.menuItem') }}
               </button>
 
+              <!-- Relay split: where this user is assigned and what is locked on which node -->
+              <button
+                v-if="relayRunning"
+                data-test="user-relay-menu"
+                @click="handleUserRelay(user); closeActionMenu()"
+                class="flex w-full items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
+              >
+                <Icon name="server" size="sm" class="text-gray-400" :stroke-width="2" />
+                {{ t('admin.users.relay.menuItem') }}
+              </button>
+
               <!-- Balance History -->
               <button
                 @click="handleBalanceHistory(user); closeActionMenu()"
@@ -782,6 +793,7 @@
       @close="closePlatformQuotaModal"
       @success="loadUsers"
     />
+    <UserRelayModal :show="showRelayModal" :user="relayUser" @close="closeRelayModal" />
     <UserApiKeysModal :show="showApiKeysModal" :user="viewingUser" @close="closeApiKeysModal" />
     <UserAllowedGroupsModal :show="showAllowedGroupsModal" :user="allowedGroupsUser" @close="closeAllowedGroupsModal" @success="loadUsers" />
     <UserBalanceModal :show="showBalanceModal" :user="balanceUser" :operation="balanceOperation" @close="closeBalanceModal" @success="loadUsers" />
@@ -825,6 +837,7 @@ import UserCreateModal from '@/components/admin/user/UserCreateModal.vue'
 import UserEditModal from '@/components/admin/user/UserEditModal.vue'
 import BulkEditUserModal from '@/components/admin/user/BulkEditUserModal.vue'
 import UserPlatformQuotaModal from '@/components/admin/user/UserPlatformQuotaModal.vue'
+import UserRelayModal from '@/components/admin/user/UserRelayModal.vue'
 import UserApiKeysModal from '@/components/admin/user/UserApiKeysModal.vue'
 import UserAllowedGroupsModal from '@/components/admin/user/UserAllowedGroupsModal.vue'
 import UserBalanceModal from '@/components/admin/user/UserBalanceModal.vue'
@@ -1849,6 +1862,30 @@ const closeBalanceModal = () => {
   balanceUser.value = null
 }
 
+// Relay split: the menu entry only exists while the master/relay-node split is running.
+const relayRunning = ref(false)
+const showRelayModal = ref(false)
+const relayUser = ref<AdminUser | null>(null)
+
+const loadRelayRunning = async () => {
+  try {
+    const status = await adminAPI.relay.getStatus()
+    relayRunning.value = status.enabled && status.runtime.state === 'running'
+  } catch {
+    relayRunning.value = false
+  }
+}
+
+const handleUserRelay = (user: AdminUser) => {
+  relayUser.value = user
+  showRelayModal.value = true
+}
+
+const closeRelayModal = () => {
+  showRelayModal.value = false
+  relayUser.value = null
+}
+
 const handleBalanceHistory = (user: AdminUser) => {
   balanceHistoryUser.value = user
   showBalanceHistoryModal.value = true
@@ -1879,6 +1916,7 @@ const handleScroll = () => {
 }
 
 onMounted(async () => {
+  void loadRelayRunning()
   await loadAttributeDefinitions()
   loadSavedFilters()
   loadSavedColumns()

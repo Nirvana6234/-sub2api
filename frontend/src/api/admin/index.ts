@@ -38,6 +38,7 @@ import contributionsAPI from './contributions'
 import contributionRoomsAPI from './contributionRooms'
 import auditAPI from './audit'
 import pluginsAPI from './plugins'
+import relayAPI from './relay'
 import ticketsAPI from './tickets'
 
 /**
@@ -79,6 +80,7 @@ export const adminAPI = {
   contributionRooms: contributionRoomsAPI,
   audit: auditAPI,
   plugins: pluginsAPI,
+  relay: relayAPI,
   tickets: ticketsAPI
 }
 
@@ -118,6 +120,7 @@ export {
   contributionRoomsAPI,
   auditAPI,
   pluginsAPI,
+  relayAPI,
   ticketsAPI
 }
 

@@ -989,6 +989,7 @@ func registerRelayRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth
 
 		// 小白端用户的分配（设计 10.4、10.8）
 		relay.GET("/users/assignment", h.Admin.Relay.UserAssignmentSummary)
+		relay.GET("/users/:id", h.Admin.Relay.UserRelayState)
 		relay.POST("/users/rebalance", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.RebalanceUsers)
 		relay.POST("/users/:id/move", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.MoveUser)
 		relay.POST("/users/:id/pin", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.PinUser)

@@ -422,3 +422,34 @@ func TestMasterCapReachedIsNotified(t *testing.T) {
 	require.Equal(t, 1, count, "five rejections, one notification")
 	release()
 }
+
+// 管理页的用户主从状态：没分配过是空的；分配后带节点，固定后带到期时间，过期的固定不再显示。
+func TestUserRelayStateShowsAssignmentAndPin(t *testing.T) {
+	ctx := context.Background()
+	h := newUserAssignHarness(t, 0)
+	a := h.nodes[0].ID
+
+	st, err := h.runtime.UserRelayState(ctx, 7)
+	require.NoError(t, err)
+	require.Nil(t, st.Assignment)
+	require.NotNil(t, st.Leases)
+	require.Empty(t, st.Leases)
+
+	require.Equal(t, a, h.assign(t, 7, 0).NodeID)
+	st, err = h.runtime.UserRelayState(ctx, 7)
+	require.NoError(t, err)
+	require.NotNil(t, st.Assignment)
+	require.Equal(t, a, st.Assignment.NodeID)
+	require.Nil(t, st.Assignment.PinnedUntil)
+
+	until := h.clock.now().Add(time.Hour)
+	require.NoError(t, h.runtime.PinUser(ctx, 1, 7, a, until))
+	st, err = h.runtime.UserRelayState(ctx, 7)
+	require.NoError(t, err)
+	require.NotNil(t, st.Assignment.PinnedUntil)
+
+	h.clock.t = h.clock.t.Add(2 * time.Hour)
+	st, err = h.runtime.UserRelayState(ctx, 7)
+	require.NoError(t, err)
+	require.Nil(t, st.Assignment.PinnedUntil, "an expired pin is not shown")
+}

@@ -300,13 +300,17 @@ func (h *RelayHandler) CheckNodeDomain(c *gin.Context) {
 // DrainNode 排空：不再分配新用户和新 Key，进行中的请求照常结束；排空最长等 30 分钟，到时从节点关掉对外服务。
 // POST /api/v1/admin/relay/nodes/:id/drain
 func (h *RelayHandler) DrainNode(c *gin.Context) {
-	h.nodeAction(c, func(c *gin.Context, id, actor int64) error { return h.runtime.DrainNode(c.Request.Context(), id, actor) })
+	h.nodeAction(c, func(c *gin.Context, id, actor int64) error {
+		return h.runtime.DrainNode(c.Request.Context(), id, actor)
+	})
 }
 
 // UndrainNode 取消排空，恢复分配。
 // POST /api/v1/admin/relay/nodes/:id/undrain
 func (h *RelayHandler) UndrainNode(c *gin.Context) {
-	h.nodeAction(c, func(c *gin.Context, id, actor int64) error { return h.runtime.UndrainNode(c.Request.Context(), id, actor) })
+	h.nodeAction(c, func(c *gin.Context, id, actor int64) error {
+		return h.runtime.UndrainNode(c.Request.Context(), id, actor)
+	})
 }
 
 // nodeAction 处理只需要节点 ID 和操作人的节点操作。
@@ -679,6 +683,21 @@ func (h *RelayHandler) UserAssignmentSummary(c *gin.Context) {
 		return
 	}
 	response.Success(c, gin.H{"nodes": counts})
+}
+
+// UserRelayState 返回一个用户的分配和各节点上锁着的额度。
+// GET /api/v1/admin/relay/users/:id
+func (h *RelayHandler) UserRelayState(c *gin.Context) {
+	userID, ok := relayUserID(c)
+	if !ok {
+		return
+	}
+	state, err := h.runtime.UserRelayState(c.Request.Context(), userID)
+	if err != nil {
+		relayError(c, err)
+		return
+	}
+	response.Success(c, state)
 }
 
 // RebalanceUsers 重新平衡：没固定的用户下一次询问时按当前比例和容量重新分配。

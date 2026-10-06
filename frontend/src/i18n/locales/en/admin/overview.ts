@@ -753,6 +753,24 @@ export default {
         keyExists: 'Attribute key already exists',
         dragToReorder: 'Drag to reorder'
       },
+      relay: {
+        menuItem: 'Relay assignment',
+        title: 'Relay assignment',
+        subtitle: 'Where {email} is assigned and the quota locked on each node',
+        assignment: 'Current assignment',
+        noAssignment: 'Not assigned yet (assigned on the user\'s next query).',
+        onMaster: 'Assigned to the master',
+        onNode: 'Assigned to node {node}',
+        pinnedUntil: 'pinned until {time}',
+        leases: 'Quota locked per node',
+        noLeases: 'No quota locked.',
+        node: 'Node',
+        dimension: 'Dimension',
+        locked: 'Locked amount',
+        expiresAt: 'Expires',
+        offlineHint: 'Quota locked on an offline node cannot come back until its lease expires, or until you press "Reclaim now" to void it on the spot and return it.',
+        reclaim: 'Reclaim now'
+      },
       platformQuota: {
         menuItem: 'Platform Quotas',
         title: 'Platform Quotas',

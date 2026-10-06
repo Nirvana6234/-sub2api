@@ -110,6 +110,8 @@ export default {
     searchPlaceholder: '搜索名称或Key...',
     endpoints: {
       title: 'API 端点',
+      relayNode: '分配的节点',
+      relayNodeHint: '你的部分 Key 分配在这个节点上，用这些 Key 时请使用此地址。',
       default: '默认',
       copied: '已复制',
       copiedHint: '已复制到剪贴板',
@@ -325,6 +327,8 @@ export default {
     ipBlacklist: 'IP 黑名单',
     ipBlacklistPlaceholder: '1.2.3.4\n5.6.0.0/16',
     ipBlacklistHint: '每行一个 IP 或 CIDR，这些 IP 将被禁止使用此密钥',
+    addressChanged: '地址已变更',
+    addressChangedHint: '该 Key 的接入地址最近变了，请把使用它的客户端配置改成 {url}',
     ipRestrictionEnabled: '已配置 IP 限制',
     ccSwitchNotInstalled:
       'CC-Switch 未安装或协议处理程序未注册。请先安装 CC-Switch 或手动复制 API 密钥。',
@@ -453,6 +457,12 @@ export default {
     compactionFilter: '请求类别',
     allCompactionTypes: '全部请求',
     compactionOnly: '仅原生压缩',
+    node: {
+      filter: '节点',
+      all: '全部节点',
+      master: '主节点',
+      column: '节点'
+    },
     accountSource: {
       filter: '账号来源',
       all: '全部来源',

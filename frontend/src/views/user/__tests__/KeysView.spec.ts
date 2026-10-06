@@ -339,6 +339,33 @@ describe('user KeysView column settings', () => {
     wrapper.unmount()
   })
 
+  it('shows an address-changed notice for keys whose node address changed recently', async () => {
+    const recent = new Date(Date.now() - 2 * 86_400_000).toISOString()
+    listKeys.mockResolvedValueOnce({
+      items: [{ ...createApiKey(), relay_node_id: 4, relay_base_url: 'https://r1.example.com', relay_address_changed_at: recent }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: 'https://site.example.com' })
+    const wrapper = await mountView()
+
+    expect(wrapper.find('[data-test="address-changed"]').exists()).toBe(true)
+    // the key's node address is listed instead of the site address, since every key is on a node
+    const popover = wrapper.findComponent({ name: 'EndpointPopover' })
+    expect(popover.props('relayEndpoints')).toEqual(['https://r1.example.com'])
+    expect(popover.props('showDefault')).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('shows no address-changed notice for keys without a recent change', async () => {
+    const wrapper = await mountView()
+
+    expect(wrapper.find('[data-test="address-changed"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('uses the default API key columns with low-frequency columns hidden', async () => {
     const wrapper = await mountView()
 

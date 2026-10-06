@@ -8,6 +8,7 @@ import contributions from './contributions'
 import audit from './audit'
 import promptAudit from './promptAudit'
 import plugins from './plugins'
+import relay from './relay'
 import latencyCompensation from './latencyCompensation'
 
 export default {
@@ -21,5 +22,6 @@ export default {
   ...audit,
   ...promptAudit,
   ...plugins,
+  ...relay,
   ...latencyCompensation,
 }

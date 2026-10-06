@@ -48,6 +48,10 @@
           <span class="text-sm text-gray-900 dark:text-white">{{ row.api_key?.name || '-' }}</span>
         </template>
 
+        <template #cell-node="{ row }">
+          <span class="text-sm text-gray-900 dark:text-white" data-test="usage-node-cell">{{ nodeLabel(row.node_id) }}</span>
+        </template>
+
         <template #cell-account="{ row }">
           <span class="text-sm text-gray-900 dark:text-white">{{ row.account?.name || '-' }}</span>
         </template>
@@ -616,6 +620,8 @@ interface Props {
   defaultSortOrder?: 'asc' | 'desc'
   showAccountBilling?: boolean
   showUpstreamEndpoint?: boolean
+  /** Relay node names by ID for the "node" column; records without a node ID were forwarded by the master. */
+  nodeNames?: Record<number, string>
   /** 嵌入统一卡片内使用：去掉自身卡片外观 */
   flat?: boolean
 }
@@ -636,6 +642,8 @@ const emit = defineEmits<{
 }>()
 const { t } = useI18n()
 const appStore = useAppStore()
+const nodeLabel = (id: number | null | undefined): string =>
+  id === undefined || id === null || id === 0 ? t('usage.node.master') : (props.nodeNames?.[id] ?? `#${id}`)
 const copiedRequestId = ref<string | null>(null)
 const showAccountBilling = props.showAccountBilling
 const showUpstreamEndpoint = props.showUpstreamEndpoint

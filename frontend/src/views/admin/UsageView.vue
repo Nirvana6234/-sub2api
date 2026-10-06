@@ -128,6 +128,7 @@
             :data="usageLogs"
             :loading="loading"
             :columns="visibleColumns"
+            :node-names="relayNodeNames"
             :server-side-sort="true"
             :default-sort-key="'created_at'"
             :default-sort-order="'desc'"
@@ -640,10 +641,23 @@ const HIDDEN_COLUMNS_VERSION_KEY = 'usage-hidden-columns-version'
 const HIDDEN_COLUMNS_PREV_VERSION = 'request-id-hidden-by-default'
 const HIDDEN_COLUMNS_CURRENT_VERSION = 'upstream-request-id-hidden-by-default'
 
+// Relay nodes (master/relay-node split): the "node" column only exists once at least one node has registered.
+const relayNodeNames = ref<Record<number, string>>({})
+const loadRelayNodeNames = async () => {
+  try {
+    const nodes = await adminAPI.relay.listNodes()
+    relayNodeNames.value = Object.fromEntries(nodes.map((n) => [n.id, n.name || n.hostname || `#${n.id}`]))
+  } catch {
+    relayNodeNames.value = {}
+  }
+}
+const hasRelayNodes = computed(() => Object.keys(relayNodeNames.value).length > 0)
+
 const allColumns = computed(() => [
   { key: 'user', label: t('admin.usage.user'), sortable: false },
   { key: 'api_key', label: t('usage.apiKeyFilter'), sortable: false },
   { key: 'account', label: t('admin.usage.account'), sortable: false },
+  ...(hasRelayNodes.value ? [{ key: 'node', label: t('usage.node.column'), sortable: false }] : []),
   { key: 'model', label: t('usage.model'), sortable: true },
   { key: 'reasoning_effort', label: t('usage.reasoningEffort'), sortable: false },
   { key: 'endpoint', label: t('usage.endpoint'), sortable: false },
@@ -868,6 +882,7 @@ const handleColumnClickOutside = (event: MouseEvent) => {
 }
 
 onMounted(() => {
+  void loadRelayNodeNames()
   applyRouteQueryFilters()
   void loadRouteUserFilterLabel()
   loadLogs()

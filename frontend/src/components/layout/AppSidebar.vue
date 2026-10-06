@@ -860,6 +860,7 @@ const adminNavItems = computed((): NavItem[] => {
     { path: '/admin/tickets', label: t('nav.tickets'), icon: TicketIcon },
     { path: '/admin/blacklist', label: t('nav.blacklist'), icon: ShieldIcon },
     { path: '/admin/proxies', label: t('nav.proxies'), icon: ServerIcon },
+    { path: '/admin/relay-nodes', label: t('nav.relayNodes'), icon: ServerIcon },
     {
       path: '/admin/security-audit',
       label: t('nav.securityAudit'),

@@ -840,6 +840,10 @@ export interface ApiKey {
   reset_5h_at: string | null
   reset_1d_at: string | null
   reset_7d_at: string | null
+  // Master/relay-node split: the node this key is pinned to (0 = master) and the address to use it with.
+  relay_node_id?: number
+  relay_base_url?: string
+  relay_address_changed_at?: string
 }
 
 export interface CreateApiKeyRequest {
@@ -1877,6 +1881,8 @@ export interface UsageLogAccountSummary {
 }
 
 export interface AdminUsageLog extends UsageLog {
+  /** Relay node that forwarded the request (master/relay-node split); absent means the master itself. */
+  node_id?: number | null
   upstream_model?: string | null
   upstream_reasoning_effort?: string | null
   upstream_response_model?: string | null
@@ -2262,6 +2268,8 @@ export interface UserErrorListParams {
 }
 
 export interface UsageQueryParams {
+  /** Master/relay-node split: 'master' for the master itself, or a relay node ID. Admin only. */
+  node_id?: number | 'master' | null
   page?: number
   page_size?: number
   api_key_id?: number

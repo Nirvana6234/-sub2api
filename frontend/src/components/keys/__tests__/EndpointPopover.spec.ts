@@ -66,4 +66,28 @@ describe('EndpointPopover', () => {
     expect(wrapper.text()).toContain('已复制到剪贴板')
     expect(wrapper.find('button[aria-label="已复制到剪贴板"]').exists()).toBe(true)
   })
+
+  it('主从分流：列出 Key 分配到的节点地址，Key 全在节点上时不再显示站点默认地址', () => {
+    const wrapper = mount(EndpointPopover, {
+      props: {
+        apiBaseUrl: 'https://default.example.com',
+        customEndpoints: [],
+        relayEndpoints: ['https://r1.example.com', 'https://r2.example.com'],
+        showDefault: false,
+      },
+    })
+
+    const text = wrapper.text()
+    expect(text).toContain('https://r1.example.com')
+    expect(text).toContain('https://r2.example.com')
+    expect(text).not.toContain('https://default.example.com')
+  })
+
+  it('没有节点地址时和以前一样只显示站点地址', () => {
+    const wrapper = mount(EndpointPopover, {
+      props: { apiBaseUrl: 'https://default.example.com', customEndpoints: [] },
+    })
+
+    expect(wrapper.text()).toContain('https://default.example.com')
+  })
 })

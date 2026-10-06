@@ -30,8 +30,8 @@ type RelayKeyFilter struct {
 
 // RelayKeyStat 是一个节点上分配的 Key 数：总数和 activeSince 之后用过的数。
 type RelayKeyStat struct {
-	Total  int64
-	Active int64
+	Total  int64 `json:"total"`
+	Active int64 `json:"active"`
 }
 
 // APIKeyRelayRepository 是 Key 仓储里和节点分配有关的部分（单独的接口，不改 APIKeyRepository，测试替身不受影响）。

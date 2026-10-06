@@ -133,6 +133,12 @@
           <Select v-model="filters.native_compaction_v2" :options="compactionOptions" @change="emitChange" />
         </div>
 
+        <!-- Master/relay-node split: which node forwarded the request (only when relay nodes exist) -->
+        <div v-if="mode !== 'errors' && relayNodes.length > 0" class="w-full sm:w-auto sm:min-w-[160px]">
+          <label class="input-label">{{ t('usage.node.filter') }}</label>
+          <Select v-model="filters.node_id" :options="nodeOptions" data-testid="admin-usage-node-filter" @change="emitChange" />
+        </div>
+
         <!-- Which kind of account served the request: admin pool / requester's own contribution / room -->
         <div v-if="mode !== 'errors'" class="w-full sm:w-auto sm:min-w-[160px]">
           <label class="input-label">{{ t('usage.accountSource.filter') }}</label>
@@ -290,6 +296,24 @@ const compactionOptions = ref<SelectOption[]>([
   { value: null, label: t('usage.allCompactionTypes') },
   { value: true, label: t('usage.compactionOnly') }
 ])
+
+// Relay nodes the usage can be filtered by; stays empty (filter hidden) when the split is not in use.
+const relayNodes = ref<{ id: number; name: string }[]>([])
+const nodeOptions = computed<SelectOption[]>(() => [
+  { value: null, label: t('usage.node.all') },
+  { value: 'master', label: t('usage.node.master') },
+  ...relayNodes.value.map((n) => ({ value: n.id, label: n.name }))
+])
+const loadRelayNodes = async () => {
+  try {
+    const nodes = await adminAPI.relay.listNodes()
+    relayNodes.value = nodes
+      .filter((n) => n.status === 'active' || n.status === 'draining' || n.status === 'disabled')
+      .map((n) => ({ id: n.id, name: n.name || n.hostname || `#${n.id}` }))
+  } catch {
+    relayNodes.value = []
+  }
+}
 
 const accountSourceOptions = ref<SelectOption[]>([
   { value: null, label: t('usage.accountSource.all') },
@@ -536,6 +560,7 @@ watch(
 )
 
 onMounted(async () => {
+  void loadRelayNodes()
   document.addEventListener('click', onDocumentClick)
   try {
     const gs = await adminAPI.groups.list(1, 1000)

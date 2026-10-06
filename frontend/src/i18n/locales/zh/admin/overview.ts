@@ -750,6 +750,24 @@ export default {
         keyExists: '属性键已存在',
         dragToReorder: '拖拽排序'
       },
+      relay: {
+        menuItem: '中转分配',
+        title: '中转分配',
+        subtitle: '用户 {email} 在主从节点上的分配和锁定的额度',
+        assignment: '当前分配',
+        noAssignment: '还没有分配（用户下次询问时才会分到节点）。',
+        onMaster: '分配在主节点',
+        onNode: '分配在节点 {node}',
+        pinnedUntil: '固定到 {time}',
+        leases: '各节点上锁定的额度',
+        noLeases: '没有锁定的额度。',
+        node: '节点',
+        dimension: '维度',
+        locked: '锁定金额',
+        expiresAt: '到期时间',
+        offlineHint: '离线节点上锁着的额度回不来，要等租约到期，或点「立即回收」当场作废并放回。',
+        reclaim: '立即回收'
+      },
       platformQuota: {
         menuItem: '平台限额',
         title: '平台限额',

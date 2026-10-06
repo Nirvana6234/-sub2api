@@ -110,6 +110,8 @@ export default {
     searchPlaceholder: 'Search name or key...',
     endpoints: {
       title: 'API Endpoints',
+      relayNode: 'Assigned node',
+      relayNodeHint: 'Some of your keys are assigned to this node; use this address with those keys.',
       default: 'Default',
       copied: 'Copied',
       copiedHint: 'Copied to clipboard',
@@ -321,6 +323,8 @@ export default {
     ipBlacklist: 'IP Blacklist',
     ipBlacklistPlaceholder: '1.2.3.4\n5.6.0.0/16',
     ipBlacklistHint: 'One IP or CIDR per line. These IPs will be blocked from using this key.',
+    addressChanged: 'Address changed',
+    addressChangedHint: 'The access address of this key changed recently; update clients that use it to {url}',
     ipRestrictionEnabled: 'IP restriction enabled',
     ccSwitchNotInstalled: 'CC-Switch is not installed or the protocol handler is not registered. Please install CC-Switch first or manually copy the API key.',
     ccsClientSelect: {
@@ -448,6 +452,12 @@ export default {
     compactionFilter: 'Request Kind',
     allCompactionTypes: 'All Requests',
     compactionOnly: 'Compaction Only',
+    node: {
+      filter: 'Node',
+      all: 'All nodes',
+      master: 'Master',
+      column: 'Node'
+    },
     accountSource: {
       filter: 'Account Source',
       all: 'All Sources',

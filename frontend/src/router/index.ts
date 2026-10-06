@@ -740,6 +740,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/relay-nodes',
+    name: 'AdminRelayNodes',
+    component: () => import('@/views/admin/RelayNodesView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Relay Nodes',
+      titleKey: 'admin.relay.title',
+      descriptionKey: 'admin.relay.description'
+    }
+  },
+  {
     path: '/admin/redeem',
     name: 'AdminRedeem',
     component: () => import('@/views/admin/RedeemView.vue'),

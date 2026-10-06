@@ -71,13 +71,15 @@
             </div>
           </div>
           <div
-            v-if="publicSettings?.api_base_url || (publicSettings?.custom_endpoints?.length ?? 0) > 0"
+            v-if="publicSettings?.api_base_url || (publicSettings?.custom_endpoints?.length ?? 0) > 0 || relayEndpoints.length > 0"
             class="keys-access-bar flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl px-3 py-2"
             data-testid="keys-access-bar"
           >
             <EndpointPopover
               :api-base-url="publicSettings?.api_base_url || ''"
               :custom-endpoints="publicSettings?.custom_endpoints || []"
+              :relay-endpoints="relayEndpoints"
+              :show-default="showSiteEndpoint"
             />
             <span class="text-xs text-gray-500 dark:text-dark-400">{{ t('keys.accessHint') }}</span>
           </div>
@@ -149,6 +151,12 @@
           <template #cell-name="{ value, row }">
             <div class="flex items-center gap-1.5">
               <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
+              <span
+                v-if="relayAddressChanged(row)"
+                class="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+                :title="t('keys.addressChangedHint', { url: keyBaseUrl(row, publicSettings?.api_base_url || '') || '-' })"
+                data-test="address-changed"
+              >{{ t('keys.addressChanged') }}</span>
               <Icon
                 v-if="row.ip_whitelist?.length > 0 || row.ip_blacklist?.length > 0"
                 name="shield"
@@ -1238,7 +1246,7 @@
     <UseKeyModal
       :show="showUseKeyModal"
       :api-key="selectedKey?.key || ''"
-      :base-url="publicSettings?.api_base_url || ''"
+      :base-url="keyBaseUrl(selectedKey, publicSettings?.api_base_url || '')"
       :platform="selectedKeyUsePlatform"
       :allow-messages-dispatch="selectedKeyAllowsMessagesDispatch"
       @close="closeUseKeyModal"
@@ -1405,6 +1413,7 @@ import { formatMultiplier } from '@/utils/formatters'
 import { maskApiKey } from '@/utils/maskApiKey'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import { platformBadgeLightClass } from '@/utils/platformColors'
+import { distinctRelayEndpoints, keyBaseUrl, relayAddressChanged, usesSiteAddress } from '@/utils/relayKeyAddress'
 import { KEY_GROUP_PROVIDERS, KEY_GROUP_PROVIDER_ICONS, getKeyGroupProvider, type KeyGroupProvider } from '@/utils/keyGroupProviders'
 import {
   buildCcSwitchImportDeeplink,
@@ -1532,6 +1541,9 @@ const columns = computed<Column[]>(() =>
 )
 
 const apiKeys = ref<ApiKey[]>([])
+// Keys on relay nodes are used with their node's address; the bar lists those next to the site-wide endpoints.
+const relayEndpoints = computed(() => distinctRelayEndpoints(apiKeys.value, publicSettings.value?.api_base_url || ''))
+const showSiteEndpoint = computed(() => usesSiteAddress(apiKeys.value, publicSettings.value?.api_base_url || ''))
 const selectedIds = ref<number[]>([])
 const showBulkEditModal = ref(false)
 const selectedApiKeys = computed(() => apiKeys.value.filter((key) => selectedIds.value.includes(key.id)))
@@ -2431,7 +2443,7 @@ const importToCcswitch = (row: ApiKey) => {
 }
 
 const executeCcsImport = (row: ApiKey, clientType: CcSwitchClientType) => {
-  const baseUrl = publicSettings.value?.api_base_url || window.location.origin
+  const baseUrl = keyBaseUrl(row, publicSettings.value?.api_base_url || '') || window.location.origin
   const platform = row.group?.platform || 'anthropic'
 
   const usageScript = `({
