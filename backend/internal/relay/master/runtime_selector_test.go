@@ -145,6 +145,7 @@ func TestRuntimeCreatesAndClosesTheSelector(t *testing.T) {
 	n, err := store.CreatePending(ctx, &master.Node{IdentityFingerprint: "fp", IdentityPublicKey: []byte{1}}, 20)
 	require.NoError(t, err)
 	require.NoError(t, store.Activate(ctx, n.ID, master.Activation{PublicDomain: "r.example.com", At: time.Now()}))
+	giveEncryptionKey(t, &runtimeHarness{store: store, runtime: rt}, n.ID)
 	version, err := env.ConfigVersion(ctx, n.ID)
 	require.NoError(t, err)
 	require.NotEmpty(t, version)
@@ -152,7 +153,9 @@ func TestRuntimeCreatesAndClosesTheSelector(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, version, again)
 	_, ok := env.NodeEncryptionKey(n.ID)
-	require.False(t, ok, "no encryption key until the node obtains a certificate")
+	require.True(t, ok, "the node registered with an encryption key")
+	_, ok = env.NodeEncryptionKey(n.ID + 1)
+	require.False(t, ok, "an unknown node has none")
 
 	raw, signed, err := env.IssueVoucher(&relayv1.Voucher{NodeId: n.ID, SelectionId: "sel-1", UserId: 9})
 	require.NoError(t, err)

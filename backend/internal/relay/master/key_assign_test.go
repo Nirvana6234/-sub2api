@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
+	"github.com/Wei-Shaw/sub2api/internal/relay/sign"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
@@ -241,11 +242,14 @@ func newKeyAdminHarness(t *testing.T, ratio int, keys ...*service.APIKey) *keyAd
 		require.NoError(t, h.store.Activate(ctx, n.ID, master.Activation{PublicDomain: d, BandwidthLimitMbps: 100, At: time.Now()}))
 		out.nodes = append(out.nodes, n)
 	}
+	// 节点是直接写进存储的：让运行时的节点状态缓存也装入。
+	require.NoError(t, h.runtime.Nodes().Load(ctx))
 	return out
 }
 
 func apiKey(id int64, node *int64) *service.APIKey {
-	return &service.APIKey{ID: id, Key: "sk-" + string(rune('a'+id)), RelayNodeID: node}
+	return &service.APIKey{ID: id, Key: "sk-" + string(rune('a'+id)), RelayNodeID: node, Status: service.StatusActive,
+		User: &service.User{ID: 1, Status: service.StatusActive}}
 }
 
 func ptr(v int64) *int64 { return &v }
@@ -355,4 +359,50 @@ func TestRuntimeResolvesNodeAddresses(t *testing.T) {
 	got, ok := service.ResolveRelayAddressForKey(ctx, ptr(a.ID))
 	require.True(t, ok)
 	require.Equal(t, "https://a.example.com", got.BaseURL)
+}
+
+// 设计 10.5：主节点分配比例为 0 时主节点不转发；从节点交来的请求带标记，标记要是这次运行的密钥签的、签发的节点还在服务。
+func TestRuntimeGateBlocksMasterForwardingAtRatioZero(t *testing.T) {
+	ctx := context.Background()
+	zero := newKeyAdminHarness(t, 0)
+	require.True(t, zero.runtime.BlockMasterForwarding(ctx))
+	ten := newKeyAdminHarness(t, 10)
+	require.False(t, ten.runtime.BlockMasterForwarding(ctx))
+
+	a := zero.nodes[0].ID
+	key := master.HandoffKey(zero.runtime)
+	require.Len(t, key, 32)
+	now := time.Now()
+	marker := sign.SignHandoff(key, a, "POST", "/v1/live", now)
+	require.True(t, zero.runtime.VerifyHandoff(marker, "POST", "/v1/live"))
+	require.False(t, zero.runtime.VerifyHandoff(marker, "POST", "/v1/responses"), "bound to the path")
+	require.False(t, zero.runtime.VerifyHandoff(sign.SignHandoff([]byte("another-key-another-key-another-1"), a, "POST", "/v1/live", now), "POST", "/v1/live"))
+	require.False(t, zero.runtime.VerifyHandoff(sign.SignHandoff(key, 999, "POST", "/v1/live", now), "POST", "/v1/live"), "an unknown node")
+
+	// 停用后签发的标记不再有效（节点不在服务）。
+	require.NoError(t, zero.runtime.Nodes().Disable(ctx, a, 1))
+	require.False(t, zero.runtime.VerifyHandoff(marker, "POST", "/v1/live"))
+}
+
+// 提示里的地址：这把 Key 分配的节点的地址。
+func TestRuntimeGateHintsTheAssignedAddress(t *testing.T) {
+	ctx := context.Background()
+	h := newKeyAdminHarness(t, 0, apiKey(1, nil))
+	a := h.nodes[0].ID
+	_, err := h.runtime.MoveKeys(ctx, 1, []int64{1}, a)
+	require.NoError(t, err)
+	require.Equal(t, "https://a.example.com", h.runtime.AssignedAddress(ctx, "sk-b"))
+	require.Empty(t, h.runtime.AssignedAddress(ctx, ""))
+}
+
+func (r *memKeyRepo) GetByKeyForAuth(_ context.Context, key string) (*service.APIKey, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, k := range r.keys {
+		if k.Key == key {
+			clone := *k
+			return &clone, nil
+		}
+	}
+	return nil, service.ErrAPIKeyNotFound
 }

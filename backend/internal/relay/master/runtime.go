@@ -19,6 +19,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
 	"github.com/Wei-Shaw/sub2api/internal/relay/sign"
 	"github.com/Wei-Shaw/sub2api/internal/relay/transport"
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
@@ -135,6 +136,8 @@ type runningRelay struct {
 	selector    Selector
 	// keyAssigner 给新建的 API Key 选节点（设计 10.2）。
 	keyAssigner *KeyAssigner
+	// handoffKey 是"交给主节点转发"的标记密钥（handoff.go）。
+	handoffKey []byte
 }
 
 // NewRuntime 创建运行时（不启动任何东西）。
@@ -393,6 +396,11 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 	for name, provide := range r.deps.SealedSections {
 		publisher.RegisterSealedSection(name, provide)
 	}
+	handoffKey, err := newHandoffKey()
+	if err != nil {
+		return nil, fmt.Errorf("generate relay hand-off key: %w", err)
+	}
+	publisher.RegisterSealedSection(SealedSectionHandoff, handoffSection(handoffKey))
 	publisher.SetEncryptionKeys(nodes.EncryptionKey)
 	invalidator := NewInvalidator(events)
 
@@ -477,7 +485,7 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 	}
 
 	runCtx, cancel := context.WithCancel(context.Background())
-	running := &runningRelay{server: server, listener: lis, nodes: nodes, publisher: publisher, events: events, invalidator: invalidator, cancel: cancel, ca: ca, keys: keys, signing: signing, revoker: revoker, quotas: quotas, recaller: recaller, quotaEvents: qEvents, selector: selector}
+	running := &runningRelay{server: server, listener: lis, nodes: nodes, publisher: publisher, events: events, invalidator: invalidator, cancel: cancel, ca: ca, keys: keys, signing: signing, revoker: revoker, quotas: quotas, recaller: recaller, quotaEvents: qEvents, selector: selector, handoffKey: handoffKey}
 	var unsubs []func()
 	if r.deps.Hub != nil {
 		unsubs = append(unsubs, r.deps.Hub.Subscribe(publisher.OnSettingsChanged))
@@ -497,6 +505,9 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 	r.invalidateAddresses()
 	service.SetRelayAddressResolver(r)
 	unsubs = append(unsubs, func() { service.SetRelayAddressResolver(nil) })
+	// 主节点分配比例为 0 时主节点不转发 API Key 请求（设计 10.5）；从节点交来的请求带标记，照常处理。
+	middleware.SetRelayMasterGate(r)
+	unsubs = append(unsubs, func() { middleware.SetRelayMasterGate(nil) })
 	if r.deps.AccessChanges != nil {
 		unsubs = append(unsubs, r.deps.AccessChanges.Subscribe(invalidator.OnAccessChange))
 		if revoker != nil {

@@ -26,6 +26,7 @@ func startWithNode(t *testing.T) (*runtimeHarness, *time.Time, int64) {
 	n, err := h.store.CreatePending(ctx, &master.Node{IdentityFingerprint: "fp", IdentityPublicKey: []byte{1}}, 20)
 	require.NoError(t, err)
 	require.NoError(t, h.store.Activate(ctx, n.ID, master.Activation{PublicDomain: "r.example.com", At: time.Now()}))
+	giveEncryptionKey(t, h, n.ID)
 	fetch(t, h, n.ID)
 	return h, &clock, n.ID
 }
@@ -166,6 +167,7 @@ func TestRuntimeQuotasLifecycle(t *testing.T) {
 	n, err := h.store.CreatePending(ctx, &master.Node{IdentityFingerprint: "fp", IdentityPublicKey: []byte{1}}, 20)
 	require.NoError(t, err)
 	require.NoError(t, h.store.Activate(ctx, n.ID, master.Activation{PublicDomain: "r.example.com", At: time.Now()}))
+	giveEncryptionKey(t, h, n.ID)
 	require.NoError(t, h.runtime.Nodes().Load(ctx))
 	_, err = q.Acquire(ctx, master.AcquireRequest{UserID: 42, NodeID: n.ID, Wants: []master.QuotaWant{{Scope: master.LeaseScope{Dimension: service.QuotaDimBalance}, Headroom: 100}}})
 	require.NoError(t, err)

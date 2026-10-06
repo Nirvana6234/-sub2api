@@ -154,6 +154,13 @@ func NewNodes(store NodeStore, ca *CA, notifier Notifier, opts NodesOptions) *No
 	}
 }
 
+// Status 返回节点当前状态（内存缓存；没见过的节点为空串）。
+func (n *Nodes) Status(nodeID int64) NodeStatus {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.status[nodeID]
+}
+
 // AttachRegistry 接上主从通信服务的连接登记表（服务创建后调用）。
 func (n *Nodes) AttachRegistry(r *transport.ConnRegistry) { n.registry = r }
 

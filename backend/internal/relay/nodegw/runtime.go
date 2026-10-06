@@ -154,7 +154,7 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 		if err != nil {
 			return fmt.Errorf("relay.node_master_url: %w", err)
 		}
-		deps.HandOff = NewHandOff(masterURL, nil)
+		deps.HandOff = NewHandOff(masterURL, nil, cache.HandoffSigner(id.NodeID, time.Now))
 	}
 	d = NewDispatcher(deps)
 

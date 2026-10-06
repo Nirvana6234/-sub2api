@@ -29,6 +29,7 @@ func TestRootRotationWaitsForEveryServingNode(t *testing.T) {
 	n, err := h.store.CreatePending(ctx, &master.Node{IdentityFingerprint: "fp", IdentityPublicKey: []byte{1}}, 20)
 	require.NoError(t, err)
 	require.NoError(t, h.store.Activate(ctx, n.ID, master.Activation{PublicDomain: "r.example.com", At: time.Now()}))
+	giveEncryptionKey(t, h, n.ID)
 	_, err = h.runtime.Publisher().FetchConfig(ctx, n.ID, "")
 	require.NoError(t, err)
 

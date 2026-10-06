@@ -12,6 +12,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
+	"github.com/Wei-Shaw/sub2api/internal/relay/sealbox"
 	"github.com/Wei-Shaw/sub2api/internal/relay/transport"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
@@ -60,6 +61,18 @@ func newRuntimeWith(t *testing.T, mutate func(*config.Config), deps func(*master
 	t.Cleanup(h.runtime.Close)
 	h.runtime.Init(context.Background())
 	return h
+}
+
+// giveEncryptionKey 给节点一把加密公钥并让运行时的节点状态重新装入：配置快照里有加密下发的部分
+// （转发标记密钥等）时，没有加密公钥的节点拿不到配置——真实节点注册时都带着。
+func giveEncryptionKey(t *testing.T, h *runtimeHarness, nodeID int64) {
+	t.Helper()
+	key, err := sealbox.GenerateKey()
+	require.NoError(t, err)
+	require.NoError(t, h.store.SetEncryptionKey(context.Background(), nodeID, key.PublicKey().Bytes()))
+	if nodes := h.runtime.Nodes(); nodes != nil {
+		require.NoError(t, nodes.Load(context.Background()))
+	}
 }
 
 // hello 连到运行中的主从通信端口，用匿名身份握手。

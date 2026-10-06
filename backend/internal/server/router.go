@@ -69,6 +69,8 @@ func SetupRouter(
 		return nil
 	}))
 	r.Use(middleware2.ServerTiming(cfg.Server.EnableServerTiming))
+	// 主从分流：主节点分配比例为 0 时主节点不转发 API Key 请求（运行时没开时什么都不做）。
+	r.Use(middleware2.RelayMasterGateMiddleware())
 
 	// Serve embedded frontend with settings injection if available
 	if web.HasEmbeddedPawFrontend() {

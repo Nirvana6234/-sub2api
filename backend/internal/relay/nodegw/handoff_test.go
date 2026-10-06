@@ -120,3 +120,55 @@ func TestNonForwardingEndpointsAreHandedOffUnchanged(t *testing.T) {
 		require.Equal(t, seen{tc.method, tc.path, tc.query, "Bearer sk-a", "127.0.0.1", tc.body}, got, tc.path)
 	}
 }
+
+// 交给主节点的请求带从节点自己签的标记（主节点分配比例为 0 时只接带标记的转发请求，设计 10.5）；客户端自己带的标记一律去掉。
+func TestHandOffCarriesTheNodesOwnMarker(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var gotMarker, gotMethod, gotPath string
+	master := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMarker, gotMethod, gotPath = r.Header.Get("X-Sub2api-Relay-Handoff"), r.Method, r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(master.Close)
+	masterURL, err := url.Parse(master.URL)
+	require.NoError(t, err)
+	signed := true
+	signer := func(method, path string) string {
+		if !signed {
+			return ""
+		}
+		return "node-marker:" + method + ":" + path
+	}
+	d := NewDispatcher(Deps{HandOff: NewHandOff(masterURL, http.DefaultTransport, signer)})
+	cfg := &config.Config{}
+	cfg.Gateway.MaxBodySize = 1 << 20
+	r := NewEngine()
+	RegisterRoutes(r, nil, d, cfg, nil)
+	node := httptest.NewServer(r)
+	t.Cleanup(node.Close)
+
+	do := func(clientMarker string) {
+		req, err := http.NewRequest(http.MethodPost, node.URL+"/v1/live", strings.NewReader("{}"))
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer sk-a")
+		if clientMarker != "" {
+			req.Header.Set("X-Sub2api-Relay-Handoff", clientMarker)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		_ = resp.Body.Close()
+		require.Equal(t, http.StatusNoContent, resp.StatusCode)
+	}
+
+	do("")
+	require.Equal(t, "node-marker:POST:/v1/live", gotMarker)
+	require.Equal(t, "POST", gotMethod)
+	require.Equal(t, "/v1/live", gotPath)
+
+	do("forged-by-client")
+	require.Equal(t, "node-marker:POST:/v1/live", gotMarker, "the client's own marker is replaced")
+
+	signed = false // 还没收到密钥：不带标记，客户端自己带的也去掉。
+	do("forged-by-client")
+	require.Empty(t, gotMarker)
+}
