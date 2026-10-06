@@ -478,6 +478,7 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 			VerifyTicket:      r.VerifyTicket,
 			GeneralConfig:     r.cachedGeneralConfig,
 			NodeAddress:       r.nodeAddress,
+			NoteStale:         heartbeats.NoteStale,
 		})
 		control.AttachSelector(selector, server.Epoch())
 		RouteNodeEvents(events, selector)

@@ -593,6 +593,9 @@ func (s *selector) reap() {
 	s.mu.Unlock()
 	for _, r := range stale {
 		slog.Warn("relay selection held too long, releasing", "node_id", r.key.nodeID, "request_id", r.key.requestID)
+		if s.env.NoteStale != nil {
+			s.env.NoteStale(r.key.nodeID)
+		}
 		s.dropRequest(r)
 	}
 }

@@ -23,6 +23,10 @@ const (
 	EventNodeOnline  = "node_online"
 	// EventNodeClockSkew：从节点与主节点的时钟偏差超过上限。
 	EventNodeClockSkew = "node_clock_skew"
+	// EventNodeSelectFlood：从节点的选号次数远超它自己报的请求数（刷选号 / 刷额度）。
+	EventNodeSelectFlood = "node_select_flood"
+	// EventNodeUnreleased：从节点的选号大量到定时清理才被放掉（选号后不上报释放）。
+	EventNodeUnreleased = "node_selections_unreleased"
 	// EventNodeVoucherShortfall：从节点写进本地队列的扣费记录迟迟没有入账（丢失 / 少报，设计 5.4）。
 	EventNodeVoucherShortfall = "node_voucher_shortfall"
 
@@ -102,10 +106,27 @@ type nodeBeat struct {
 	enqueued, consumed uint64
 	sessionStart       int64
 	// 对账窗口点（每 10 秒一个，宽限期之前最近的那个做基准）。
-	windows                       []recordWindow
-	skewAlerted, shortfallAlerted bool
-	shortfall                     int
+	windows []recordWindow
+	// 选号计数（每秒一个桶，近 1 分钟）和定时清理放掉的次数（近 10 分钟）。
+	selects                                                   [60]selectBucket
+	stale                                                     []time.Time
+	skewAlerted, shortfallAlerted, floodAlerted, staleAlerted bool
+	shortfall                                                 int
 }
+
+type selectBucket struct {
+	sec int64
+	n   int32
+}
+
+// 异常检测阈值：近 1 分钟选号次数超过 selectFloodFactor × 节点自己报的请求数 + selectFloodSlack 就告警（一个请求最多换号重试
+// 十几次，正常不会到这个量）；近 10 分钟被定时清理放掉的选号达到 staleThreshold 次告警。
+const (
+	selectFloodFactor = 12
+	selectFloodSlack  = 300
+	staleWindow       = 10 * time.Minute
+	staleThreshold    = 10
+)
 
 type recordWindow struct {
 	at       time.Time
@@ -232,6 +253,36 @@ func max32(a, b int32) int32 {
 	return b
 }
 
+// NoteSelect 数一次选号调用（申请频率异常检测）。
+func (h *Heartbeats) NoteSelect(nodeID int64) {
+	now := h.now()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := h.nodes[nodeID]
+	if n == nil {
+		n = &nodeBeat{}
+		h.nodes[nodeID] = n
+	}
+	b := &n.selects[now.Unix()%60]
+	if b.sec != now.Unix() {
+		*b = selectBucket{sec: now.Unix()}
+	}
+	b.n++
+}
+
+// NoteStale 记一次选号因为迟迟没有释放被定时清理放掉。
+func (h *Heartbeats) NoteStale(nodeID int64) {
+	now := h.now()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := h.nodes[nodeID]
+	if n == nil {
+		n = &nodeBeat{}
+		h.nodes[nodeID] = n
+	}
+	n.stale = append(n.stale, now)
+}
+
 // NoteSettled 数主节点从这台入账的记录条数（对账用，本次启动以来）。
 func (h *Heartbeats) NoteSettled(nodeID int64, records int) {
 	h.mu.Lock()
@@ -345,6 +396,7 @@ func (h *Heartbeats) Tick(ctx context.Context) {
 		if e := h.reconcileLocked(id, n, now); e != nil {
 			events = append(events, *e)
 		}
+		events = append(events, h.anomaliesLocked(id, n, now)...)
 	}
 	rows := h.pending
 	h.pending = nil
@@ -400,6 +452,41 @@ func (h *Heartbeats) reconcileLocked(nodeID int64, n *nodeBeat, now time.Time) *
 	}
 	return &Event{Kind: EventNodeVoucherShortfall, Severity: SeverityCritical, NodeID: nodeID,
 		Detail: map[string]any{"enqueued": base.enqueued, "settled": n.consumed, "queued": backlog, "shortfall": shortfall}}
+}
+
+// anomaliesLocked 申请频率和选号后不上报的异常检测（设计第 13 节）：每种异常持续期间只告警一次。
+func (h *Heartbeats) anomaliesLocked(nodeID int64, n *nodeBeat, now time.Time) []Event {
+	var out []Event
+	var selects int32
+	for i := range n.selects {
+		if b := n.selects[i]; b.sec != 0 && now.Unix()-b.sec < 60 {
+			selects += b.n
+		}
+	}
+	reported := int32(0)
+	if n.last != nil {
+		reported = n.last.GetRequests_1M()
+	}
+	flood := int(selects) > selectFloodFactor*int(reported)+selectFloodSlack
+	if flood && !n.floodAlerted {
+		out = append(out, Event{Kind: EventNodeSelectFlood, Severity: SeverityWarning, NodeID: nodeID,
+			Detail: map[string]any{"selects_1m": selects, "reported_requests_1m": reported}})
+	}
+	n.floodAlerted = flood
+
+	keep := n.stale[:0]
+	for _, at := range n.stale {
+		if now.Sub(at) < staleWindow {
+			keep = append(keep, at)
+		}
+	}
+	n.stale = keep
+	unreleased := len(n.stale) >= staleThreshold
+	if unreleased && !n.staleAlerted {
+		out = append(out, Event{Kind: EventNodeUnreleased, Severity: SeverityWarning, NodeID: nodeID, Detail: map[string]any{"count_10m": len(n.stale)}})
+	}
+	n.staleAlerted = unreleased
+	return out
 }
 
 // Shortfall 返回对账算出的少报凭证数（超过阈值的节点，主节点不再给它发额度，见 Quotas）。

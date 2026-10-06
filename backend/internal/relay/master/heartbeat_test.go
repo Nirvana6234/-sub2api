@@ -233,3 +233,48 @@ func TestHeartbeatsForgetDisabledNodes(t *testing.T) {
 	require.NotContains(t, notifier.kinds(), master.EventNodeOffline)
 	require.False(t, h.Online(6))
 }
+
+// 异常检测（设计第 13 节）：选号次数远超节点自己报的请求数（申请频率），或选号大量到定时清理才被放掉（选号后不上报），各告警一次。
+func TestHeartbeatsDetectSelectFloodAndUnreleasedSelections(t *testing.T) {
+	ctx := context.Background()
+	h, clock, notifier, _ := newHeartbeats(t)
+	h.Record(ctx, 3, beat(clock, func(r *relayv1.HeartbeatRequest) { r.Requests_1M = 10 }))
+
+	for i := 0; i < 400; i++ {
+		h.NoteSelect(3)
+	}
+	h.Tick(ctx)
+	require.NotContains(t, notifier.kinds(), master.EventNodeSelectFlood, "400 selects for 10 reported requests is within retries + slack")
+	for i := 0; i < 100; i++ {
+		h.NoteSelect(3)
+	}
+	h.Tick(ctx)
+	require.Contains(t, notifier.kinds(), master.EventNodeSelectFlood, "500 > 12×10 + 300")
+	before := len(notifier.kinds())
+	h.Tick(ctx)
+	require.Len(t, notifier.kinds(), before, "announced once while it lasts")
+
+	// 一分钟后选号数滑出窗口，异常解除；再来一轮又会告警。
+	clock.advance(2 * time.Minute)
+	h.Tick(ctx)
+	for i := 0; i < 500; i++ {
+		h.NoteSelect(3)
+	}
+	h.Tick(ctx)
+	count := 0
+	for _, k := range notifier.kinds() {
+		if k == master.EventNodeSelectFlood {
+			count++
+		}
+	}
+	require.Equal(t, 2, count)
+
+	for i := 0; i < 9; i++ {
+		h.NoteStale(3)
+	}
+	h.Tick(ctx)
+	require.NotContains(t, notifier.kinds(), master.EventNodeUnreleased)
+	h.NoteStale(3)
+	h.Tick(ctx)
+	require.Contains(t, notifier.kinds(), master.EventNodeUnreleased)
+}
