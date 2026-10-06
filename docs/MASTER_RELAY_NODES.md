@@ -1,4 +1,4 @@
-# 主从节点架构设计（v0.31，2026-10-06）
+# 主从节点架构设计（v0.32，2026-10-06）
 
 > 状态：开发中（分支 `feat/master-relay-nodes`，进度见开发计划）。本文只记录当前结论；历史版本不再保留在正文里。开发计划见 `docs/MASTER_RELAY_NODES_PLAN.md`。
 > 代码引用按 2026-09-25 的 main（`c652d850`）核对；行号会漂移，引用处同时写了函数名，以函数名为准。
@@ -921,6 +921,12 @@ GET /v1/relay/assignment        Authorization: Bearer <API Key>
 - 从节点关闭自动更新和 `AUTO_SETUP`（`deploy/docker-compose.yml:45` 默认开着，首次启动会跑安装流程、写配置文件）。
 - **升级**：后台排空 → 升级 → 恢复，一台一台来。主节点先升，再升从节点。不想让这台的 API Key 用户中断时，按 10.4 先手动把解析改到主节点。
 - **主节点换服务器**：只要根证书不变，从节点改一下主节点地址就能重新连上，不用重新激活。
+
+**实现状态（v0.32，WP18）**：部署文件和手册已就位，**没有在真机上跑过**（放进 WP19 的验收）：
+- `deploy/docker-compose.relay-node.yml` + `deploy/relay-node.env.example`：同一个镜像用 `NODE_ROLE=relay` 启动；只开 443；数据卷持久保存 `identity/`（长期密钥）、`certs/`（证书缓存）、扣费队列、日志和记录；`AUTO_SETUP=false`（从节点本来就不读它）；服务器参数 `SERVER_READ_HEADER_TIMEOUT` / `SERVER_MAX_HEADER_BYTES` / `SERVER_IDLE_TIMEOUT` 现在对从节点也生效（`nodegw/runtime.go`，之前固定为只设读头 10 秒）；容器内健康检查用 TCP 探活（证书按域名签发，容器内没有合法 SNI）。环境变量名由 `TestLoadRelayNodeSettingsFromDeployEnvironment` 保证能读到（指纹用逗号分隔）。
+- `deploy/Caddyfile`：全局 `on_demand_tls { ask http://127.0.0.1:9002/ }` 和 `https://` 站点块（只给后台已登记的从节点域名签发，主节点只放行网关接口）。`deploy/test-caddyfile-cache.sh` 仍通过。
+- `docs/RELAY_NODE_OPS.md`：部署、激活、上线迁移、日常运维、升级（排空 → 换镜像 → 取消排空）、换机器、下线、密钥备份与恢复、被攻破后更换审核 / 提示词审计 / 联网搜索 Key、轮换、容量与磁盘规划、独立外部监控、故障速查。
+- **没做 / 需要真机**：真实 Let's Encrypt 签发、Caddy `on_demand` 联动、从零按手册部署一台并接入；容器镜像里是否带 `nc`（alpine busybox 自带）。
 
 ## 12. 从节点日志与记录
 

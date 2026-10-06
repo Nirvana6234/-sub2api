@@ -295,8 +295,11 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 	srv := &http.Server{
 		Addr:              net.JoinHostPort(cfg.Server.Host, strconv.Itoa(cfg.Server.Port)),
 		Handler:           r,
-		ReadHeaderTimeout: 10 * time.Second,
-		ConnState:         stats.ConnState,
+		ReadHeaderTimeout: nodeReadHeaderTimeout(cfg),
+		// 读取请求头、空闲连接和请求头大小与主节点用同一组服务器参数（server.*），部署手册给了推荐值。
+		MaxHeaderBytes: cfg.Server.MaxHeaderBytes,
+		IdleTimeout:    time.Duration(cfg.Server.IdleTimeout) * time.Second,
+		ConnState:      stats.ConnState,
 	}
 	errc := make(chan error, 1)
 	if rc.NodeTLSDisabled {
@@ -435,4 +438,12 @@ func applyErrorPassthroughRules(cache *node.ConfigCache, svc *service.ErrorPasst
 		return
 	}
 	svc.ReplaceRules(rules)
+}
+
+// nodeReadHeaderTimeout 取 server.read_header_timeout（秒），没配置（零值，测试里直接构造的配置）时用 10 秒。
+func nodeReadHeaderTimeout(cfg *config.Config) time.Duration {
+	if cfg.Server.ReadHeaderTimeout > 0 {
+		return time.Duration(cfg.Server.ReadHeaderTimeout) * time.Second
+	}
+	return 10 * time.Second
 }

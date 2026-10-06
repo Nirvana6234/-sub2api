@@ -6,6 +6,36 @@
 			idle 2m
 		}
 	}
+
+	# 主从分流：把某台从节点的域名手动解析到主节点（排空升级、故障应急）时，由 Caddy 按需为已登记的
+	# 从节点域名申请证书。ask 接口只给"后台已登记的从节点域名"放行，其余一律拒绝，所以别人把任意域名
+	# 解析过来也申请不到证书。端口要和主节点 relay.domain_ask_addr（RELAY_DOMAIN_ASK_ADDR，只能是回环地址）一致。
+	# 没打开主从分流或没配置 domain_ask_addr 时 ask 不可达，Caddy 会拒绝为这些域名签发，对现有站点没有影响。
+	on_demand_tls {
+		ask http://127.0.0.1:9002/
+	}
+}
+
+# 从节点域名落到主节点时的入口。主节点对这些域名只开放 API Key 网关接口，其余路径返回 404，
+# 所以不会成为访问后台、登录的入口（主节点内置的从节点域名限制）。
+https:// {
+	tls {
+		on_demand
+		protocols tls1.2 tls1.3
+	}
+	reverse_proxy localhost:8080 {
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+		transport http {
+			keepalive 120s
+			compression off
+		}
+	}
+	request_body {
+		max_size 256MB
+	}
 }
 
 # 修改为你的域名
