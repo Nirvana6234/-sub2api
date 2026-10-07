@@ -579,6 +579,14 @@ macOS 的版本由后台设置 `client_latest_version_mac` 单独控制（当前
   未发现被利用的迹象（伪造回调不带 trade_no）。
 - 留意：参数白名单较严，若某些易支付变体回调带额外字段，真实回调会被拒，靠「向上游查单」补偿入账；发版后关注已付款未到账的订单。
 
+**2026-10-07 客户端 1.0 重新出包（推理强度修复）**：版本号仍是 1.0。打 tag `client-v1.0` 触发 `client-release` 流水线
+（Windows + macOS，用固定证书签名），产物放到 `download.gongfeiai.com/downloads/`（即 154 机 `/var/www/downloads/`）：
+
+- `codex-relay-client_v1.0_x64.zip`（SHA256 `205dfc98107079cbf4402014e7d8ce86508cef2f2fe789d97f660f617ab822f3`），旧包备份为 `.bak-20261007-before-effort-fix`；
+- `codex-relay-client_v1.0_macos-arm64.tar.gz`（SHA256 `4428e83dbe495f3e6070c8d9a62a090c0c11661b9bd71b2682c11abf8a64da95`），这是第一次有 macOS 1.0 包。
+- 后台设置 `client_download_direct_url_mac` 改为 v1.0 Mac 包、`client_latest_version_mac` 改为 1.0；SQL 改完重启了 sub2api 容器（清 HTML 缓存）。
+- 版本号没变，已装 1.0 的用户**不会**收到更新提示，需要重新下载安装才有推理强度修复。
+
 ## B5. 回滚
 
 bind mount 模式：把 compose 里挂载的文件名改回上一个二进制，重跑 B3 最后那条命令即可。
