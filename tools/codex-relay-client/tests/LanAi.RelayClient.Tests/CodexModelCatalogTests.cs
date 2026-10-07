@@ -142,6 +142,49 @@ public sealed class CodexModelCatalogTests
         Assert.True((bool)entry["supports_reasoning_summary_parameter"]!);
     }
 
+    /// <summary>
+    /// A GPT model the group serves but Codex has never heard of (gpt-6.1-sol) must still
+    /// get the effort picker: the server saw "no reasoning effort" on every request from a
+    /// client that listed such a model with its levels emptied.
+    /// </summary>
+    [Theory]
+    [InlineData("gpt-6.1-sol")]
+    [InlineData("gpt-5.6-sol")]
+    [InlineData("codex-auto-review")]
+    [InlineData("o4-mini")]
+    public void AnOpenAiFamilyModelKeepsTheReasoningLevelsOfTheTemplate(string slug)
+    {
+        const string generous = """
+            {"models":[{"slug":"gpt-5.5","priority":1,"visibility":"list","shell_type":"unified_exec",
+              "default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"low","description":"x"},{"effort":"high","description":"y"}],
+              "supports_reasoning_effort_updates":true,"support_verbosity":true,"default_verbosity":"low",
+              "apply_patch_tool_type":"freeform","base_instructions":"b"}]}
+            """;
+
+        JsonObject entry = Entries(CodexModelCatalog.Build(generous, CodexGroupModels.From([slug])!)!).Single();
+
+        Assert.Equal("medium", (string)entry["default_reasoning_level"]!);
+        Assert.Equal(2, ((JsonArray)entry["supported_reasoning_levels"]!).Count);
+        Assert.True((bool)entry["supports_reasoning_effort_updates"]!);
+        // Only the reasoning fields: the rest of the unlisted-model contract is unchanged.
+        Assert.False((bool)entry["support_verbosity"]!);
+        Assert.Null(entry["apply_patch_tool_type"]);
+    }
+
+    [Theory]
+    [InlineData("claude-sonnet-5", false)]
+    [InlineData("grok-4.7", false)]
+    [InlineData("deepseek-v4", false)]
+    [InlineData("gpt-6.1-sol", true)]
+    [InlineData("GPT-5.5", true)]
+    [InlineData("o3", true)]
+    [InlineData("omni-model", false)]
+    [InlineData("", false)]
+    public void OnlyOpenAiFamilyModelsAreRecognised(string slug, bool expected)
+    {
+        Assert.Equal(expected, CodexModelCatalog.IsOpenAiFamily(slug));
+    }
+
     [Fact]
     public void DropsWhatBelongedToTheModelTheEntryWasCopiedFrom()
     {
