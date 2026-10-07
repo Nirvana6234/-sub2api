@@ -1,7 +1,7 @@
 export default {
   relay: {
     title: '从节点管理',
-    description: '主从节点分流：把中转请求分给自己部署的从节点，主节点只做授权和计费。节点的激活、停用、排空、分配和日志都在这里管理。',
+    description: '管理主节点与从节点的分流。主节点负责授权和计费，从节点负责承接中转请求；节点激活、域名、分配和运行状态都在这里管理。',
     enabled: '主从分流',
     turnedOn: '主从分流已打开',
     turnedOff: '主从分流已关闭',
@@ -31,6 +31,7 @@ export default {
     },
     dns: {
       unknown: '未检查',
+      direct: '直接 IP 地址',
       node: '这台',
       master: '主节点（手动切换）',
       other: '别处',
@@ -51,12 +52,15 @@ export default {
       inflight: '进行中 {inflight}，连接 {conns}'
     },
     nodes: {
-      hint: '新节点第一次连上来会出现在这里等待激活：核对它在本机打印的指纹之后再激活。',
+      hint: '新从节点首次连接后会出现在列表中。请先核对节点本机显示的身份指纹，再执行激活。',
       rejectAllPending: '全部拒绝（{count}）',
-      colNode: '节点',
+      colNode: '节点 / 地址',
       colHealth: '健康',
       colLoad: '负载',
       colAssigned: '分到的 Key / 用户',
+      domain: '地址',
+      registeredIp: '注册 IP',
+      version: '版本',
       master: '主节点',
       masterHint: '也承接请求；比例为 0 时不做任何中转',
       masterRatio: '新分配比例 {percent}%',
@@ -74,6 +78,7 @@ export default {
       enable: '启用',
       moveKeys: '转移 Key',
       replace: '换机器',
+      editDomain: '修改地址',
       reclaim: '回收额度',
       revoke: '吊销证书',
       details: '详情'
@@ -85,13 +90,16 @@ export default {
       typedFingerprint: '在从节点本机读到的指纹',
       typedFingerprintHint: '两边一致才会激活。',
       region: '地区',
-      domain: '对外域名',
-      checkDomain: '检查解析',
-      ignoreDns: '域名现在没有解析到这台，仍然激活（解析稍后再改）',
+      domain: '对外地址',
+      checkDomain: '检查地址',
+      endpointPlaceholder: 'relay1.example.com[:端口] 或 192.0.2.10:8443',
+      endpointHint: '支持域名、域名加端口、IPv4、IPv4 加端口；直接填写 IP 不做 DNS 核对，IPv6 加端口请写成 [2001:db8::1]:8443。',
+      ignoreDns: '地址现在没有指向这台，仍然激活（解析稍后再改）',
       bandwidth: '带宽上限（Mbps）',
       bandwidthHint: '0 表示不限。负载按它计算，超过阈值后不再给这台分配新用户。',
       done: '节点已激活',
       domainResult: {
+        direct: '使用直接 IP 地址（{resolved}），不做 DNS 核对。',
         node: '域名解析到这台的注册 IP（{expected}）。',
         master: '域名现在解析到主节点（{resolved}），不是这台（{expected}）。',
         other: '域名现在解析到别处（{resolved}），不是这台（{expected}）。',
@@ -146,6 +154,13 @@ export default {
         message: '回收「{name}」上锁定的额度：在线时通知它退回，离线时当场作废它的租约。',
         done: '已发出 {sent} 份收回，当场作废 {voided} 份（放回 {amount}）'
       }
+    },
+    editDomain: {
+      title: '修改从节点地址',
+      hint: '修改「{name}」的对外地址后，已分配的 {count} 把 Key 导出地址会随之变化；请先确认 DNS 或 IP 指向这台节点。',
+      ignoreDns: 'DNS 尚未指向这台节点，仍然保存（我会稍后修改解析）',
+      save: '保存地址',
+      done: '从节点地址已更新'
     },
     details: {
       title: '节点详情',

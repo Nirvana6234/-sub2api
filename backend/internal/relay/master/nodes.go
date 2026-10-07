@@ -75,6 +75,7 @@ const (
 	AuditMultiIPChanged    = "allow_multi_ip_changed"
 	AuditPendingPurged     = "pending_purged"
 	AuditAddressMoved      = "address_moved"
+	AuditDomainChanged     = "domain_changed"
 	AuditNodeReplaced      = "node_replaced"
 	AuditDrained           = "drained"
 	AuditUndrained         = "undrained"
@@ -457,9 +458,13 @@ func (n *Nodes) Activate(ctx context.Context, nodeID int64, confirmFingerprint s
 	if transport.NormalizeFingerprint(confirmFingerprint) != node.IdentityFingerprint {
 		return ErrFingerprintMismatch
 	}
-	a.PublicDomain = strings.ToLower(strings.TrimSpace(a.PublicDomain))
-	if a.PublicDomain == "" {
+	if strings.TrimSpace(a.PublicDomain) == "" {
 		return ErrDomainRequired
+	}
+	var normalizeErr error
+	a.PublicDomain, normalizeErr = NormalizeRelayEndpoint(a.PublicDomain)
+	if normalizeErr != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidDomain, normalizeErr)
 	}
 	if a.At.IsZero() {
 		a.At = n.now()
@@ -471,6 +476,33 @@ func (n *Nodes) Activate(ctx context.Context, nodeID int64, confirmFingerprint s
 	return n.store.Audit(ctx, AuditEntry{NodeID: nodeID, ActorUserID: a.ActorUserID, Action: AuditActivated, Detail: map[string]any{
 		"fingerprint": node.IdentityFingerprint, "public_domain": a.PublicDomain, "name": a.Name,
 	}})
+}
+
+// UpdateDomain changes the public address of an already registered node.
+// Pending nodes set their domain during activation; active, draining and disabled nodes can edit it here.
+func (n *Nodes) UpdateDomain(ctx context.Context, nodeID int64, domain string, actor int64) error {
+	node, err := n.store.GetByID(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	if node.Status != NodeActive && node.Status != NodeDraining && node.Status != NodeDisabled {
+		return ErrStatusConflict
+	}
+	if strings.TrimSpace(domain) == "" {
+		return ErrDomainRequired
+	}
+	var normalizeErr error
+	domain, normalizeErr = NormalizeRelayEndpoint(domain)
+	if normalizeErr != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidDomain, normalizeErr)
+	}
+	if err := n.store.UpdatePublicDomain(ctx, nodeID, domain); err != nil {
+		return err
+	}
+	return n.store.Audit(ctx, AuditEntry{
+		NodeID: nodeID, ActorUserID: actor, Action: AuditDomainChanged,
+		Detail: map[string]any{"before": node.PublicDomain, "after": domain},
+	})
 }
 
 // Replace 换机器（设计 11.6）：新机器按新节点注册后，管理员核对它的指纹，把已停用的旧节点的域名、名称、带宽、区域转给它并激活。

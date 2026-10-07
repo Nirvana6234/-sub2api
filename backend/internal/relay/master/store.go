@@ -109,6 +109,8 @@ var (
 	ErrFingerprintMismatch = errors.New("the fingerprint does not match the one this node registered with")
 	// ErrDomainRequired：激活节点必须填对外域名。
 	ErrDomainRequired = errors.New("a public domain is required to activate a relay node")
+	// ErrInvalidDomain：对外地址必须是主机名或 IP，可带端口，不能带协议或路径。
+	ErrInvalidDomain = errors.New("the public relay address is invalid")
 )
 
 // NodeStore 是节点、证书、审计的持久化。实现必须保证：
@@ -123,6 +125,7 @@ type NodeStore interface {
 	List(ctx context.Context) ([]*Node, error)
 	SetStatus(ctx context.Context, id int64, from []NodeStatus, to NodeStatus) (bool, error)
 	Activate(ctx context.Context, id int64, a Activation) error
+	UpdatePublicDomain(ctx context.Context, id int64, domain string) error
 	// ReplaceNode 换机器（设计 11.6）：把已停用的 from 节点的对外域名转给待激活的 to 节点并激活 to，
 	// 同一个事务里清掉 from 的域名（域名全局唯一）。from 不是停用状态、to 不是待激活时返回 ErrStatusConflict。
 	ReplaceNode(ctx context.Context, fromID, toID int64, a Activation) error

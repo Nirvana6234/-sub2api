@@ -976,6 +976,7 @@ func registerRelayRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth
 		relay.POST("/nodes/reject-pending", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.RejectAllPendingNodes)
 		relay.GET("/nodes/:id/domain-check", h.Admin.Relay.CheckNodeDomain)
 		relay.POST("/nodes/:id/activate", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.ActivateNode)
+		relay.PUT("/nodes/:id/domain", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.UpdateNodeDomain)
 		relay.POST("/nodes/:id/reject", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.RejectNode)
 		relay.POST("/nodes/:id/drain", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.DrainNode)
 		relay.POST("/nodes/:id/undrain", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.UndrainNode)

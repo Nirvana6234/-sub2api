@@ -208,6 +208,34 @@ func (r *relayNodeRepository) Activate(ctx context.Context, id int64, a master.A
 	return nil
 }
 
+func (r *relayNodeRepository) UpdatePublicDomain(ctx context.Context, id int64, domain string) error {
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE relay_nodes SET public_domain = $2, updated_at = NOW()
+		WHERE id = $1 AND deleted_at IS NULL AND status IN ('active', 'draining', 'disabled')`, id, domain)
+	if err != nil {
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+			return master.ErrDomainTaken
+		}
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		node, getErr := r.GetByID(ctx, id)
+		if getErr != nil {
+			return getErr
+		}
+		if node.Status != master.NodeActive && node.Status != master.NodeDraining && node.Status != master.NodeDisabled {
+			return master.ErrStatusConflict
+		}
+		return master.ErrStatusConflict
+	}
+	return nil
+}
+
 func (r *relayNodeRepository) ReplaceNode(ctx context.Context, fromID, toID int64, a master.Activation) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {

@@ -51,6 +51,7 @@ CHANNELS = {
     "production": "https://gongfeiai.com/",
     "test": "http://test.gongfeiai.com/",
     "local": "http://127.0.0.1:8080/",
+    "vm-relay": "http://192.168.216.1:18080/",
 }
 
 
@@ -71,6 +72,13 @@ def check(path, channel):
             problems.append(f"{path.name} does not contain the {name} address {address}")
         if name != channel and hits:
             problems.append(f"{path.name} contains the {name} address {address}, but was built for the {channel} channel")
+
+    relay_node = "http://192.168.216.1:18081"
+    node_hits = count(blob, relay_node)
+    if channel == "vm-relay" and not node_hits:
+        problems.append(f"{path.name} does not contain the VM relay address {relay_node}")
+    if channel != "vm-relay" and node_hits:
+        problems.append(f"{path.name} contains the VM relay address {relay_node}")
 
     return problems
 

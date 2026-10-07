@@ -2,7 +2,7 @@ export default {
   relay: {
     title: 'Relay Nodes',
     description:
-      'Master / relay-node split: relay requests are spread over relay nodes you deploy while the master only handles authorization and billing. Activate, drain, disable, assign and inspect logs of nodes here.',
+      'Manage traffic between the master and relay nodes. The master handles authorization and billing while relay nodes serve forwarded requests; configure nodes, domains, assignments and health here.',
     enabled: 'Relay split',
     turnedOn: 'Relay split turned on',
     turnedOff: 'Relay split turned off',
@@ -33,6 +33,7 @@ export default {
     },
     dns: {
       unknown: 'Not checked',
+      direct: 'Direct IP address',
       node: 'This node',
       master: 'Master (switched manually)',
       other: 'Elsewhere',
@@ -53,12 +54,15 @@ export default {
       inflight: 'In flight {inflight}, connections {conns}'
     },
     nodes: {
-      hint: 'A new node shows up here the first time it connects. Compare the fingerprint it prints locally before activating it.',
+      hint: 'A new relay node appears here after its first connection. Verify the identity fingerprint shown on that machine before activating it.',
       rejectAllPending: 'Reject all ({count})',
-      colNode: 'Node',
+      colNode: 'Node / address',
       colHealth: 'Health',
       colLoad: 'Load',
       colAssigned: 'Keys / users assigned',
+      domain: 'Address',
+      registeredIp: 'Registered IP',
+      version: 'Version',
       master: 'Master',
       masterHint: 'Also serves requests; does no relaying at 0%',
       masterRatio: 'New-assignment share {percent}%',
@@ -76,6 +80,7 @@ export default {
       enable: 'Enable',
       moveKeys: 'Move keys',
       replace: 'Replace machine',
+      editDomain: 'Edit address',
       reclaim: 'Reclaim quota',
       revoke: 'Revoke certificate',
       details: 'Details'
@@ -88,19 +93,29 @@ export default {
       typedFingerprint: 'Fingerprint read on the node machine',
       typedFingerprintHint: 'Both must match for activation to go through.',
       region: 'Region',
-      domain: 'Public domain',
-      checkDomain: 'Check DNS',
-      ignoreDns: 'Activate even though the domain does not resolve to this node yet (I will fix DNS later)',
+      domain: 'Public address',
+      checkDomain: 'Check address',
+      endpointPlaceholder: 'relay1.example.com[:port] or 192.0.2.10:8443',
+      endpointHint: 'Supports hostnames, hostnames with ports, IPv4, and IPv4 with ports. Direct IPs skip DNS checks. Use [2001:db8::1]:8443 for IPv6 with a port.',
+      ignoreDns: 'Activate even though this address does not point to this node yet (I will fix DNS later)',
       bandwidth: 'Bandwidth limit (Mbps)',
       bandwidthHint: '0 means unlimited. Load is computed against it; above the threshold no new users are assigned.',
       done: 'Node activated',
       domainResult: {
+        direct: 'Using the direct IP address ({resolved}); DNS is not checked.',
         node: 'The domain resolves to this node\'s registered IP ({expected}).',
         master: 'The domain currently resolves to the master ({resolved}), not this node ({expected}).',
         other: 'The domain currently resolves elsewhere ({resolved}), not this node ({expected}).',
         failed: 'The domain did not resolve. Add the DNS record at your DNS provider first.',
         unknown: 'This node\'s registered IP is unknown, so DNS cannot be checked.'
       }
+    },
+    editDomain: {
+      title: 'Edit relay node address',
+      hint: 'Changing the public address for "{name}" changes the exported address for its {count} assigned keys. Confirm DNS or the IP points to this node first.',
+      ignoreDns: 'DNS does not point to this node yet; save anyway (I will update it later)',
+      save: 'Save address',
+      done: 'Relay node address updated'
     },
     revoke: {
       title: 'Revoke node certificate',

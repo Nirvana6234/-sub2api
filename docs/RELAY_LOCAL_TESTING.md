@@ -8,8 +8,8 @@
 
 | 进程 | 地址 | 说明 |
 |---|---|---|
-| 主节点 | `http://127.0.0.1:18080` | 管理后台 API、数据库和 Redis 都连它；对外还有主从通信 `127.0.0.1:17443`（TLS，双向认证） |
-| 从节点 | `http://127.0.0.1:18081` | **Codex 连这个**。不连数据库和 Redis，只经 17443 连主节点 |
+| 主节点 | `http://127.0.0.1:18080`（VM 客户端用 `192.168.216.1:18080`） | 管理后台 API、数据库和 Redis 都连它；对外还有主从通信 `127.0.0.1:17443`（TLS，双向认证） |
+| 从节点 | `http://127.0.0.1:18081`（VM 客户端用 `192.168.216.1:18081`） | **Codex 连这个**。不连数据库和 Redis，只经 17443 连主节点 |
 | 假上游（可选） | `http://127.0.0.1:18090` | 假的 OpenAI 接口，没有真实账号时用来冒烟 |
 
 脚本都在 `tools/relay-local-e2e/`，运行时的数据、日志、凭据放在仓库根目录下被 git 忽略的 `.local/relay-e2e/`。
@@ -65,10 +65,32 @@ python tools\relay-local-e2e\drive.py route
 
 几点说明：
 
-- **激活**：`drive.py activate` 直接取从节点注册时报的指纹去激活，省掉了"在从节点本机读指纹再核对"这一步，**只有本机联调这样做**；真机部署必须照手册核对。域名填 `relay1.localhost`，本机解析不到，所以脚本选了"仍然激活"。
+- **激活**：`drive.py activate` 直接取从节点注册时报的指纹去激活，省掉了"在从节点本机读指纹再核对"这一步，**只有本机联调这样做**；真机部署必须照手册核对。管理页的对外地址支持域名、域名加端口、IPv4、IPv4 加端口；直接填写 IP 时不做 DNS 一致性核对；IPv6 加端口写成 `[2001:db8::1]:8443`。本地演示可填 `relay1.localhost`，本机解析不到，所以脚本选了"仍然激活"。
 - **外部探测**：主节点要从外面握手验证从节点的 HTTPS 才开始分配，本机没有，所以 `route` 把它关了（通用配置里的 `probe_enabled`）。不关的话新 Key 永远分不到从节点。
 - **主节点比例 0**：新分配全给从节点；这时直接请求主节点 18080 的网关接口会被拒（403，提示分配的地址），要测"从节点之外"的路径把比例调回大于 0。
 - 起来后 `python tools\relay-local-e2e\drive.py status` 能看到运行状态 `running`；`python tools\relay-local-e2e\smoke.py` 会跑一遍健康、请求、排空、使用记录、日志的检查。
+
+### 虚拟机客户端（VMware VMnet8/NAT）
+
+如果客户端在 VMware 的 NAT 网络（VMnet8）里，从节点必须监听宿主机的 VMnet8 地址，不能只监听 `127.0.0.1`。本机宿主机地址是 `192.168.216.1`，启动时使用：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\relay-local-e2e\start-node.ps1 -BindHost 192.168.216.1
+```
+
+虚拟机客户端的主节点地址填 `http://192.168.216.1:18080/`，从节点地址填 `http://192.168.216.1:18081/v1`。在虚拟机里先确认连通性：
+
+```bash
+curl http://192.168.216.1:18081/health
+```
+
+如果虚拟机连接超时，请在宿主机的管理员 PowerShell 放行端口：
+
+```powershell
+New-NetFirewallRule -DisplayName 'sub2api relay node 18081' -Direction Inbound -Action Allow -Protocol TCP -LocalAddress 192.168.216.1 -LocalPort 18081 -Profile Private
+```
+
+启动脚本在执行策略受限的机器上需要带 `-ExecutionPolicy Bypass`；这只对本次 PowerShell 生效。
 
 ## 5. 用假上游先冒烟
 

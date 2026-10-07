@@ -845,16 +845,47 @@ var ErrDomainMismatch = errors.New("the domain does not currently resolve to the
 // ActivateNode 核对指纹后激活待激活节点（设计 11.2）。激活前检查域名当前解析到这台的注册 IP：不一致时返回 ErrDomainMismatch，
 // 管理员确认继续（ignoreDNS）才激活（比如解析还没生效、先激活再改解析）。
 func (r *Runtime) ActivateNode(ctx context.Context, nodeID int64, fingerprint string, a Activation, ignoreDNS bool) error {
+	if strings.TrimSpace(a.PublicDomain) == "" {
+		return ErrDomainRequired
+	}
+	normalizedDomain, err := NormalizeRelayEndpoint(a.PublicDomain)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidDomain, err)
+	}
+	a.PublicDomain = normalizedDomain
 	if !ignoreDNS {
 		check, err := r.CheckNodeDomain(ctx, nodeID, a.PublicDomain)
 		if err != nil {
 			return err
 		}
-		if check.State != DomainNode {
+		if check.State != DomainNode && check.State != DomainDirect {
 			return fmt.Errorf("%w (resolves to: %s)", ErrDomainMismatch, strings.Join(check.Resolved, ", "))
 		}
 	}
 	return r.nodeOp(func(n *Nodes) error { return n.Activate(ctx, nodeID, fingerprint, a) })
+}
+
+// UpdateNodeDomain changes a serving or disabled node's public address. DNS mismatches
+// require an explicit administrator confirmation, matching activation behavior.
+func (r *Runtime) UpdateNodeDomain(ctx context.Context, nodeID int64, domain string, actor int64, ignoreDNS bool) error {
+	if strings.TrimSpace(domain) == "" {
+		return ErrDomainRequired
+	}
+	normalizedDomain, err := NormalizeRelayEndpoint(domain)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidDomain, err)
+	}
+	domain = normalizedDomain
+	if !ignoreDNS {
+		check, err := r.CheckNodeDomain(ctx, nodeID, domain)
+		if err != nil {
+			return err
+		}
+		if check.State != DomainNode && check.State != DomainDirect {
+			return fmt.Errorf("%w (resolves to: %s)", ErrDomainMismatch, strings.Join(check.Resolved, ", "))
+		}
+	}
+	return r.nodeOp(func(n *Nodes) error { return n.UpdateDomain(ctx, nodeID, domain, actor) })
 }
 
 // CheckNodeDomain 检查一个域名当前是否解析到这台节点的注册 IP（管理页填域名时和激活前用）。
@@ -1178,8 +1209,8 @@ func (r *Runtime) cachedGeneralConfig(ctx context.Context) GeneralConfig {
 
 // IsNodeDomain 实现 middleware.RelayMasterGate：这个 Host 是不是已登记的从节点域名（Caddy 的 ask 接口和 Host 限制都用它）。
 func (r *Runtime) IsNodeDomain(host string) bool {
-	host = normalizeHost(host)
-	if host == "" {
+	input, err := ParseRelayEndpoint(host)
+	if err != nil {
 		return false
 	}
 	if _, err := r.runningRelay(); err != nil {
@@ -1192,7 +1223,16 @@ func (r *Runtime) IsNodeDomain(host string) bool {
 		if nodes, err := r.deps.Store.List(context.Background()); err == nil {
 			for _, n := range nodes {
 				if n.Status.Serving() && n.PublicDomain != "" {
-					set[strings.ToLower(n.PublicDomain)] = struct{}{}
+					if endpoint, parseErr := ParseRelayEndpoint(n.PublicDomain); parseErr == nil {
+						// An explicitly configured port is part of the node
+						// identity. This allows a VM client to reach the master
+						// and node on the same host IP at different ports.
+						if endpoint.PortExplicit {
+							set[endpoint.String()] = struct{}{}
+						} else {
+							set[endpoint.Host] = struct{}{}
+						}
+					}
 				}
 			}
 			r.domains.set, r.domains.at = set, r.now()
@@ -1200,13 +1240,26 @@ func (r *Runtime) IsNodeDomain(host string) bool {
 			return false
 		}
 	}
-	_, ok := r.domains.set[host]
+	key := input.Host
+	if input.PortExplicit {
+		key = input.String()
+		if _, exact := r.domains.set[key]; exact {
+			return true
+		}
+		// A hostname stored without a port keeps the historical behavior:
+		// requests with an explicit default or alternate port still identify it.
+		key = input.Host
+	}
+	_, ok := r.domains.set[key]
 	return ok
 }
 
 // normalizeHost 去掉端口和末尾的点并转小写。
 func normalizeHost(host string) string {
 	host = strings.TrimSpace(strings.ToLower(host))
+	if endpoint, err := ParseRelayEndpoint(host); err == nil {
+		return endpoint.Host
+	}
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}

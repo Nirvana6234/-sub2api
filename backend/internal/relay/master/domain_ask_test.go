@@ -59,6 +59,14 @@ func TestDomainAskEndpointOnlyApprovesRegisteredNodeDomains(t *testing.T) {
 
 	require.True(t, h.runtime.IsNodeDomain("relay1.example.com:443"), "the port is ignored")
 	require.False(t, h.runtime.IsNodeDomain("api.example.com"))
+
+	// An explicitly configured port must distinguish a node endpoint from the
+	// master API when both are exposed on the same host IP.
+	require.NoError(t, h.store.UpdatePublicDomain(ctx, active.ID, "192.0.2.10:18081"))
+	require.NoError(t, h.runtime.SetNodeAllowMultiIP(ctx, active.ID, 1, true))
+	require.True(t, h.runtime.IsNodeDomain("192.0.2.10:18081"))
+	require.False(t, h.runtime.IsNodeDomain("192.0.2.10:18080"))
+	require.False(t, h.runtime.IsNodeDomain("192.0.2.10"))
 }
 
 // ask 接口只能监听本机回环地址：配成对外地址时不启动（运行时照常运行）。

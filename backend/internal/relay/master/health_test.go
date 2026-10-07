@@ -169,6 +169,11 @@ func TestDomainResolutionStates(t *testing.T) {
 	require.Equal(t, master.DomainNode, check.State)
 	require.Equal(t, master.DomainOther, e.monitor.CheckDomain(ctx, "new.example.com", "203.0.113.99").State)
 	require.Equal(t, master.DomainUnknown, e.monitor.CheckDomain(ctx, "new.example.com", "").State, "no registered IP to compare with")
+	// IP literals with an explicit port are checked directly; they are not sent
+	// through DNS lookup.
+	check = e.monitor.CheckDomain(ctx, "203.0.113.50:18081", "203.0.113.50")
+	require.Equal(t, master.DomainDirect, check.State)
+	require.Equal(t, []string{"203.0.113.50"}, check.Resolved)
 }
 
 // 设计 10.3 第 3 条：某台错误率明显高于其他节点，自动停止分配并告警，恢复后自动恢复。

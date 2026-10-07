@@ -1,6 +1,9 @@
 # Start a relay node on 18081 (plain http, no database, no redis).
 # Needs the master's root fingerprint: run "python tools\relay-local-e2e\drive.py fingerprint" first.
-param([string]$Fingerprint = '')
+param(
+    [string]$Fingerprint = '',
+    [string]$BindHost = '192.168.216.1'
+)
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path "$PSScriptRoot\..\..").Path
 Set-Location $repo
@@ -15,7 +18,7 @@ New-Item -ItemType Directory -Force "$e2e\node" | Out-Null
 # A node needs only these. Everything else is pushed down by the master after activation.
 $env:NODE_ROLE = 'relay'
 $env:DATA_DIR = (Resolve-Path "$e2e\node").Path            # long-term identity key, certificate, local billing queue, logs
-$env:SERVER_HOST = '127.0.0.1'
+$env:SERVER_HOST = $BindHost
 $env:SERVER_PORT = '18081'
 $env:RELAY_NODE_MASTER_ADDR = '127.0.0.1:17443'
 $env:RELAY_NODE_MASTER_URL = 'http://127.0.0.1:18080'
@@ -28,4 +31,4 @@ Remove-Item env:DATABASE_PASSWORD, env:RELAY_KEY_ENCRYPTION_KEY, env:JWT_SECRET,
 
 Start-Process "$e2e\sub2api-relay.exe" -WorkingDirectory $repo `
     -RedirectStandardOutput "$e2e\node.out.log" -RedirectStandardError "$e2e\node.err.log" -WindowStyle Hidden
-Write-Host "node starting on http://127.0.0.1:18081 ; it shows up as 'pending' in the admin page until you activate it"
+Write-Host "node starting on http://$BindHost`:18081 ; it shows up as 'pending' in the admin page until you activate it"

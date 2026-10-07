@@ -7,7 +7,7 @@ import { apiClient } from '../client'
 
 export type RelayNodeStatus = 'pending' | 'active' | 'draining' | 'disabled' | 'rejected'
 export type RelayRuntimeState = 'not_master' | 'not_configured' | 'off' | 'running' | 'failed'
-export type RelayDomainState = 'unknown' | 'node' | 'master' | 'other' | 'failed'
+export type RelayDomainState = 'unknown' | 'direct' | 'node' | 'master' | 'other' | 'failed'
 export type RelayKeyPurpose = 'root_ca' | 'ticket' | 'voucher'
 
 export interface RelayRuntimeStatus {
@@ -120,6 +120,11 @@ export interface RelayActivateRequest {
   public_domain: string
   bandwidth_limit_mbps?: number
   region?: string
+  ignore_dns_mismatch?: boolean
+}
+
+export interface RelayNodeDomainUpdateRequest {
+  public_domain: string
   ignore_dns_mismatch?: boolean
 }
 
@@ -286,6 +291,10 @@ export async function checkNodeDomain(id: number, domain: string): Promise<Relay
 
 export async function activateNode(id: number, req: RelayActivateRequest): Promise<void> {
   await apiClient.post(`/admin/relay/nodes/${id}/activate`, req)
+}
+
+export async function updateNodeDomain(id: number, req: RelayNodeDomainUpdateRequest): Promise<void> {
+  await apiClient.put(`/admin/relay/nodes/${id}/domain`, req)
 }
 
 export async function rejectNode(id: number): Promise<void> {
@@ -488,6 +497,7 @@ export const relayAPI = {
   nodeHealths,
   checkNodeDomain,
   activateNode,
+  updateNodeDomain,
   rejectNode,
   rejectAllPending,
   drainNode,

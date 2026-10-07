@@ -147,6 +147,26 @@ func (s *MemoryStore) Activate(_ context.Context, id int64, a Activation) error 
 	return nil
 }
 
+func (s *MemoryStore) UpdatePublicDomain(_ context.Context, id int64, domain string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n, ok := s.nodes[id]
+	if !ok {
+		return ErrNodeNotFound
+	}
+	if n.Status != NodeActive && n.Status != NodeDraining && n.Status != NodeDisabled {
+		return ErrStatusConflict
+	}
+	for _, other := range s.nodes {
+		if other.ID != id && strings.EqualFold(other.PublicDomain, domain) && domain != "" {
+			return ErrDomainTaken
+		}
+	}
+	n.PublicDomain = domain
+	n.UpdatedAt = time.Now()
+	return nil
+}
+
 func (s *MemoryStore) ReplaceNode(_ context.Context, fromID, toID int64, a Activation) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

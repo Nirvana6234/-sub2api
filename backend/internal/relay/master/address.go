@@ -24,7 +24,7 @@ type addressEntry struct {
 	at   time.Time
 }
 
-// ResolveRelayAddress 实现 service.RelayAddressResolver：从节点是 https://<管理页填写的域名>，主节点是 api_base_url。
+// ResolveRelayAddress 实现 service.RelayAddressResolver：从节点是 https://<管理页填写的地址>，主节点是 api_base_url。
 func (r *Runtime) ResolveRelayAddress(ctx context.Context, nodeID int64) (service.RelayAddress, bool) {
 	now := r.now()
 	r.addresses.mu.Lock()
@@ -62,7 +62,11 @@ func (r *Runtime) lookupAddress(ctx context.Context, nodeID int64) (service.Rela
 	if n.PublicDomain == "" {
 		return service.RelayAddress{}, false
 	}
-	return service.RelayAddress{Role: service.RelayRoleRelay, NodeID: n.ID, BaseURL: "https://" + n.PublicDomain}, true
+	endpoint, err := ParseRelayEndpoint(n.PublicDomain)
+	if err != nil {
+		return service.RelayAddress{}, false
+	}
+	return service.RelayAddress{Role: service.RelayRoleRelay, NodeID: n.ID, BaseURL: "https://" + endpoint.URLHost()}, true
 }
 
 // invalidateAddresses 清掉地址缓存（节点域名、激活状态变了）。

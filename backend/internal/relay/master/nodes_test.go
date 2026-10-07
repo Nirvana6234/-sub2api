@@ -46,3 +46,25 @@ func TestRestartedMasterStillRefusesRenewedAndRevokedCertificates(t *testing.T) 
 	require.ErrorContains(t, again.AdmitConn(peer("new")), "revoked")
 	require.Error(t, again.AuthorizeIssued(ctx, peer("new")))
 }
+
+func TestUpdateDomainNormalizesServingNode(t *testing.T) {
+	ctx := context.Background()
+	store := master.NewMemoryStore()
+	node, err := store.CreatePending(ctx, &master.Node{IdentityFingerprint: "fp-domain", IdentityPublicKey: []byte{1}}, 20)
+	require.NoError(t, err)
+	require.NoError(t, store.Activate(ctx, node.ID, master.Activation{PublicDomain: "old.example.com", At: time.Now()}))
+
+	nodes := master.NewNodes(store, nil, nil, master.NodesOptions{})
+	require.NoError(t, nodes.UpdateDomain(ctx, node.ID, " New.Example.com ", 7))
+
+	updated, err := store.GetByID(ctx, node.ID)
+	require.NoError(t, err)
+	require.Equal(t, "new.example.com", updated.PublicDomain)
+	require.NoError(t, nodes.UpdateDomain(ctx, node.ID, "192.0.2.10:18081", 7))
+	updated, err = store.GetByID(ctx, node.ID)
+	require.NoError(t, err)
+	require.Equal(t, "192.0.2.10:18081", updated.PublicDomain)
+
+	require.ErrorIs(t, nodes.UpdateDomain(ctx, node.ID, "", 7), master.ErrDomainRequired)
+	require.NoError(t, nodes.UpdateDomain(ctx, node.ID, "new.example.com", 7))
+}

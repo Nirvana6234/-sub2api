@@ -1,11 +1,7 @@
 <template>
   <AppLayout>
     <div class="space-y-6">
-      <section class="flex flex-col gap-4 border-b border-gray-200 pb-5 dark:border-dark-700 sm:flex-row sm:items-end sm:justify-between">
-        <div class="min-w-0">
-          <h2 class="text-lg font-semibold text-gray-900 dark:text-white">{{ t('admin.relay.title') }}</h2>
-          <p class="mt-1 max-w-3xl text-sm text-gray-500 dark:text-gray-400">{{ t('admin.relay.description') }}</p>
-        </div>
+      <section class="flex justify-end border-b border-gray-200 pb-3 dark:border-dark-700">
         <div class="flex flex-shrink-0 items-center gap-3">
           <span class="badge" :class="runtimeClass" data-test="runtime-state">{{ t(`admin.relay.runtime.${runtimeState}`) }}</span>
           <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200">

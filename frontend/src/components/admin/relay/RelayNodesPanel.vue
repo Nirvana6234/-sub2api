@@ -52,11 +52,13 @@
           <tr v-for="n in nodes" :key="n.id" :data-test="`node-${n.id}`">
             <td class="px-3 py-2 align-top">
               <div class="font-medium text-gray-900 dark:text-white">{{ n.name || n.hostname || `#${n.id}` }}</div>
-              <div v-if="n.public_domain" class="text-xs text-gray-500">{{ n.public_domain }}</div>
-              <div class="text-xs text-gray-500">
-                {{ n.registered_ip || '-' }}<span v-if="n.region"> · {{ n.region }}</span>
+              <div v-if="n.public_domain" class="text-xs text-gray-500">
+                <span class="text-gray-400">{{ t('admin.relay.nodes.domain') }}:</span> {{ n.public_domain }}
               </div>
-              <div v-if="n.program_version" class="text-xs text-gray-400">{{ n.program_version }}</div>
+              <div class="text-xs text-gray-500">
+                <span class="text-gray-400">{{ t('admin.relay.nodes.registeredIp') }}:</span> {{ n.registered_ip || '-' }}<span v-if="n.region"> · {{ n.region }}</span>
+              </div>
+              <div v-if="n.program_version" class="text-xs text-gray-400">{{ t('admin.relay.nodes.version') }} {{ n.program_version }}</div>
             </td>
             <td class="px-3 py-2 align-top">
               <span class="badge" :class="statusClass(n.status)">{{ t(`admin.relay.status.${n.status}`) }}</span>
@@ -143,6 +145,9 @@
                 <button v-if="n.status === 'active' || n.status === 'draining' || n.status === 'disabled'" type="button" class="btn btn-secondary btn-sm" data-test="replace" @click="openReplace(n)">
                   {{ t('admin.relay.actions.replace') }}
                 </button>
+                <button v-if="n.status === 'active' || n.status === 'draining' || n.status === 'disabled'" type="button" class="btn btn-secondary btn-sm" data-test="edit-domain" @click="openEditDomain(n)">
+                  {{ t('admin.relay.actions.editDomain') }}
+                </button>
                 <button v-if="n.status === 'active' || n.status === 'draining'" type="button" class="btn btn-secondary btn-sm" data-test="reclaim" @click="confirmSimple('reclaim', n)">
                   {{ t('admin.relay.actions.reclaim') }}
                 </button>
@@ -189,15 +194,16 @@
         <div>
           <label class="input-label">{{ t('admin.relay.activate.domain') }}</label>
           <div class="flex gap-2">
-            <input v-model="form.domain" class="input flex-1" data-test="domain" placeholder="relay1.example.com" @input="domainCheck = null" />
+            <input v-model="form.domain" class="input flex-1" data-test="domain" :placeholder="t('admin.relay.activate.endpointPlaceholder')" @input="domainCheck = null" />
             <button type="button" class="btn btn-secondary" :disabled="!form.domain.trim() || checking" data-test="check-domain" @click="checkDomain">
               {{ t('admin.relay.activate.checkDomain') }}
             </button>
           </div>
-          <p v-if="domainCheck" class="mt-1 text-xs" :class="domainCheck.state === 'node' ? 'text-green-600' : 'text-amber-600'" data-test="domain-check-result">
+          <p v-if="domainCheck" class="mt-1 text-xs" :class="domainCheck.state === 'node' || domainCheck.state === 'direct' ? 'text-green-600' : 'text-amber-600'" data-test="domain-check-result">
             {{ domainCheckText }}
           </p>
-          <label v-if="domainCheck && domainCheck.state !== 'node'" class="mt-2 flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
+          <p class="mt-1 text-xs text-gray-500">{{ t('admin.relay.activate.endpointHint') }}</p>
+          <label v-if="domainCheck && domainCheck.state !== 'node' && domainCheck.state !== 'direct'" class="mt-2 flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
             <input v-model="form.ignoreDns" type="checkbox" data-test="ignore-dns" />
             {{ t('admin.relay.activate.ignoreDns') }}
           </label>
@@ -213,6 +219,40 @@
           <button type="button" class="btn btn-secondary" @click="closeDialog">{{ t('common.cancel') }}</button>
           <button type="button" class="btn btn-primary" :disabled="busy || !canActivate" data-test="activate-submit" @click="submitActivate">
             {{ t('admin.relay.actions.activate') }}
+          </button>
+        </div>
+      </template>
+    </BaseDialog>
+
+    <!-- edit domain -->
+    <BaseDialog :show="dialog.kind === 'editDomain'" :title="t('admin.relay.editDomain.title')" @close="closeDialog">
+      <div v-if="dialog.kind === 'editDomain'" class="space-y-3" data-test="edit-domain-form">
+        <p class="text-sm text-gray-600 dark:text-gray-300">
+          {{ t('admin.relay.editDomain.hint', { name: nodeLabel(dialog.node), count: keyCount(dialog.node.id) }) }}
+        </p>
+        <div>
+          <label class="input-label">{{ t('admin.relay.activate.domain') }}</label>
+          <div class="flex gap-2">
+            <input v-model="form.domain" class="input flex-1" data-test="edit-domain-input" :placeholder="t('admin.relay.activate.endpointPlaceholder')" @input="domainCheck = null" />
+            <button type="button" class="btn btn-secondary" :disabled="!form.domain.trim() || checking" data-test="edit-domain-check" @click="checkDomain">
+              {{ t('admin.relay.activate.checkDomain') }}
+            </button>
+          </div>
+          <p v-if="domainCheck" class="mt-1 text-xs" :class="domainCheck.state === 'node' || domainCheck.state === 'direct' ? 'text-green-600' : 'text-amber-600'" data-test="edit-domain-check-result">
+            {{ domainCheckText }}
+          </p>
+          <p class="mt-1 text-xs text-gray-500">{{ t('admin.relay.activate.endpointHint') }}</p>
+          <label v-if="domainCheck && domainCheck.state !== 'node' && domainCheck.state !== 'direct'" class="mt-2 flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
+            <input v-model="form.ignoreDns" type="checkbox" data-test="edit-domain-ignore-dns" />
+            {{ t('admin.relay.editDomain.ignoreDns') }}
+          </label>
+        </div>
+      </div>
+      <template #footer>
+        <div class="flex justify-end gap-2">
+          <button type="button" class="btn btn-secondary" @click="closeDialog">{{ t('common.cancel') }}</button>
+          <button type="button" class="btn btn-primary" :disabled="busy || !canEditDomain" data-test="edit-domain-submit" @click="submitEditDomain">
+            {{ t('admin.relay.editDomain.save') }}
           </button>
         </div>
       </template>
@@ -364,6 +404,7 @@ type SimpleAction = 'reject' | 'rejectAll' | 'drain' | 'undrain' | 'disable' | '
 type Dialog =
   | { kind: 'none' }
   | { kind: 'activate'; node: RelayNode }
+  | { kind: 'editDomain'; node: RelayNode }
   | { kind: 'revoke'; node: RelayNode }
   | { kind: 'replace'; node: RelayNode }
   | { kind: 'moveKeys'; node: RelayNode }
@@ -451,7 +492,7 @@ function certDays(id: number): number | null {
 }
 
 function dnsClass(state: RelayDomainState | undefined): string {
-  if (state === 'node') return 'text-green-600'
+	if (state === 'node' || state === 'direct') return 'text-green-600'
   if (state === 'other' || state === 'failed') return 'text-red-600'
   return 'text-gray-500'
 }
@@ -493,10 +534,22 @@ function openActivate(n: RelayNode): void {
   dialog.value = { kind: 'activate', node: n }
 }
 
+function openEditDomain(n: RelayNode): void {
+  resetForm()
+  form.domain = n.public_domain
+  dialog.value = { kind: 'editDomain', node: n }
+}
+
 const canActivate = computed(() => {
   if (!form.fingerprint.trim() || !form.domain.trim()) return false
   // A domain that does not resolve to this node needs an explicit "go ahead anyway".
-  if (domainCheck.value && domainCheck.value.state !== 'node' && !form.ignoreDns) return false
+  if (domainCheck.value && domainCheck.value.state !== 'node' && domainCheck.value.state !== 'direct' && !form.ignoreDns) return false
+  return true
+})
+
+const canEditDomain = computed(() => {
+  if (!form.domain.trim()) return false
+  if (domainCheck.value && domainCheck.value.state !== 'node' && domainCheck.value.state !== 'direct' && !form.ignoreDns) return false
   return true
 })
 
@@ -508,7 +561,7 @@ const domainCheckText = computed(() => {
 })
 
 async function checkDomain(): Promise<void> {
-  if (dialog.value.kind !== 'activate') return
+  if (dialog.value.kind !== 'activate' && dialog.value.kind !== 'editDomain') return
   checking.value = true
   try {
     const id = dialog.value.node.id
@@ -516,6 +569,27 @@ async function checkDomain(): Promise<void> {
       (await action.load(() => adminAPI.relay.checkNodeDomain(id, form.domain.trim()))) ?? null
   } finally {
     checking.value = false
+  }
+}
+
+async function submitEditDomain(): Promise<void> {
+  if (dialog.value.kind !== 'editDomain') return
+  const id = dialog.value.node.id
+  busy.value = true
+  try {
+    const ok = await action.runOk(
+      () => adminAPI.relay.updateNodeDomain(id, {
+        public_domain: form.domain.trim(),
+        ignore_dns_mismatch: form.ignoreDns
+      }),
+      t('admin.relay.editDomain.done')
+    )
+    if (ok) {
+      closeDialog()
+      emit('refresh')
+    }
+  } finally {
+    busy.value = false
   }
 }
 

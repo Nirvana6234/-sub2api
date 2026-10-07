@@ -35,6 +35,10 @@
     <DefineConstants>$(DefineConstants);LOCAL_SERVER</DefineConstants>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(VmRelayTest)' == 'true'">
+    <DefineConstants>$(DefineConstants);VM_RELAY_TEST</DefineConstants>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <PackageReference Include="Markdig" Version="1.3.2" />

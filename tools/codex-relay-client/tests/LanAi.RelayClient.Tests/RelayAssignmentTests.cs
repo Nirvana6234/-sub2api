@@ -71,6 +71,22 @@ public sealed class RelayAssignmentTests
     }
 
     [Fact]
+    public async Task VmRelayTestUsesTheLocalNodeAddressWithTheAssignedTicket()
+    {
+        var server = new ScriptedServer();
+        server.Answers.Enqueue((200, RelayAnswer("https://relay1.localhost", "srt1.local")));
+        var client = new RelayAssignmentClient(new HttpClient(server), Server,
+            _ => Task.FromResult("jwt-1"), new Clock(), "http://192.168.202.1:18081");
+
+        RelayTarget target = await client.GetTargetAsync(CancellationToken.None);
+
+        Assert.Equal("http://192.168.202.1:18081", target.BaseUrl);
+        Assert.Equal("srt1.local", target.Bearer);
+        Assert.Equal(12, target.NodeId);
+        Assert.Equal(("GET", "/api/v1/paw/relay/assignment", "Bearer jwt-1", string.Empty), server.Requests.Single());
+    }
+
+    [Fact]
     public async Task AMasterAssignmentKeepsTheServersOwnAddressAndTheSessionWhateverTheAnswerSays()
     {
         // The session may only ever travel to the address compiled into the client.

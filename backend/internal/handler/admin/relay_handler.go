@@ -91,6 +91,12 @@ type SetRelayNodeMultiIPRequest struct {
 	Allow *bool `json:"allow" binding:"required"`
 }
 
+// UpdateRelayNodeDomainRequest 修改已注册节点的对外域名。
+type UpdateRelayNodeDomainRequest struct {
+	PublicDomain      string `json:"public_domain" binding:"required"`
+	IgnoreDNSMismatch bool   `json:"ignore_dns_mismatch"`
+}
+
 // relayActor 取当前管理员，并把来源 IP 放进 ctx 供审计使用。
 func relayActor(c *gin.Context) (int64, bool) {
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
@@ -152,7 +158,7 @@ func relayError(c *gin.Context, err error) {
 	case errors.Is(err, master.ErrNodeNotFound), errors.Is(err, master.ErrKeyNotFound), errors.Is(err, master.ErrAssignmentNotFound):
 		err = infraerrors.NotFound("RELAY_NOT_FOUND", err.Error())
 	case errors.Is(err, master.ErrFingerprintMismatch), errors.Is(err, master.ErrDomainRequired),
-		errors.Is(err, master.ErrInvalidGeneralConfig), errors.Is(err, master.ErrUnknownKeyPurpose), errors.Is(err, master.ErrInvalidPin), errors.Is(err, relaynotify.ErrInvalidConfig):
+		errors.Is(err, master.ErrInvalidDomain), errors.Is(err, master.ErrInvalidGeneralConfig), errors.Is(err, master.ErrUnknownKeyPurpose), errors.Is(err, master.ErrInvalidPin), errors.Is(err, relaynotify.ErrInvalidConfig):
 		err = infraerrors.BadRequest("RELAY_INVALID_REQUEST", err.Error())
 	case errors.Is(err, master.ErrRelayNotRunning), errors.Is(err, master.ErrKeyAssignmentUnavailable):
 		err = infraerrors.Conflict("RELAY_NOT_RUNNING", err.Error())
@@ -271,6 +277,29 @@ func (h *RelayHandler) ActivateNode(c *gin.Context) {
 		ActorUserID:        actor,
 	}, req.IgnoreDNSMismatch)
 	if err != nil {
+		relayError(c, err)
+		return
+	}
+	response.Success(c, nil)
+}
+
+// UpdateNodeDomain 修改服务中或已停用节点的对外域名。
+// PUT /api/v1/admin/relay/nodes/:id/domain
+func (h *RelayHandler) UpdateNodeDomain(c *gin.Context) {
+	id, ok := relayNodeID(c)
+	if !ok {
+		return
+	}
+	var req UpdateRelayNodeDomainRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	actor, ok := relayActor(c)
+	if !ok {
+		return
+	}
+	if err := h.runtime.UpdateNodeDomain(c.Request.Context(), id, req.PublicDomain, actor, req.IgnoreDNSMismatch); err != nil {
 		relayError(c, err)
 		return
 	}

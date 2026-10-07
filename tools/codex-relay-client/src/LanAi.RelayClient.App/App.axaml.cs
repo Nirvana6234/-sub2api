@@ -223,7 +223,8 @@ public partial class App : Application
             relayTargets: new RelayAssignmentClient(
                 new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(15) },
                 ClientOptions.ServerAddress,
-                session.GetAccessTokenAsync));
+                session.GetAccessTokenAsync,
+                relayNodeAddressOverride: ClientOptions.RelayNodeAddress));
         // Claude Code's settings.json and the editor's own settings, put back on exit.
         var pluginBinding = new ClaudePluginBinding(
             new ClaudeCodeSettingsWriter(Path.Combine(AppPaths.PluginConfigRoot, "claude-settings-journal.json")),

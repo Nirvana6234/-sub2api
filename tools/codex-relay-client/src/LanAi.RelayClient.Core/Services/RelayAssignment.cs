@@ -73,6 +73,7 @@ internal sealed class RelayAssignmentClient : IRelayTargetProvider
 
     private readonly HttpClient _http;
     private readonly string _serverAddress;
+    private readonly string? _relayNodeAddressOverride;
     private readonly Func<CancellationToken, Task<string>> _accessToken;
     private readonly TimeProvider _clock;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -92,10 +93,12 @@ internal sealed class RelayAssignmentClient : IRelayTargetProvider
         HttpClient http,
         string serverAddress,
         Func<CancellationToken, Task<string>> accessToken,
-        TimeProvider? clock = null)
+        TimeProvider? clock = null,
+        string? relayNodeAddressOverride = null)
     {
         _http = http ?? throw new ArgumentNullException(nameof(http));
         _serverAddress = (serverAddress ?? throw new ArgumentNullException(nameof(serverAddress))).TrimEnd('/');
+        _relayNodeAddressOverride = relayNodeAddressOverride?.TrimEnd('/');
         _accessToken = accessToken ?? throw new ArgumentNullException(nameof(accessToken));
         _clock = clock ?? TimeProvider.System;
     }
@@ -179,7 +182,7 @@ internal sealed class RelayAssignmentClient : IRelayTargetProvider
 
     private RelayTarget ToTarget(Assignment a, string jwt) =>
         a.IsRelay && a.Ticket is not null
-            ? new RelayTarget(a.BaseUrl, a.Ticket, IsRelay: true, a.NodeId)
+            ? new RelayTarget(_relayNodeAddressOverride ?? a.BaseUrl, a.Ticket, IsRelay: true, a.NodeId)
             : new RelayTarget(_serverAddress, jwt, IsRelay: false, NodeId: 0);
 
     private static bool TicketNeedsRenewal(Assignment a, DateTimeOffset now) =>

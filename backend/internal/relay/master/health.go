@@ -47,6 +47,7 @@ type DomainState string
 const (
 	DomainUnknown DomainState = "unknown" // 还没查过，或不知道这台的 IP
 	DomainNode    DomainState = "node"    // 这台
+	DomainDirect  DomainState = "direct"  // 直接填写了 IP，不需要 DNS 核对
 	DomainMaster  DomainState = "master"  // 主节点（管理员手动切换，设计 10.3）
 	DomainOther   DomainState = "other"   // 别处
 	DomainFailed  DomainState = "failed"  // 解析失败
@@ -227,12 +228,19 @@ func (m *HealthMonitor) notify(ctx context.Context, e Event) {
 
 // probe 做一次外部探测并更新状态、发事件。
 func (m *HealthMonitor) probe(ctx context.Context, n *Node, cfg GeneralConfig) {
+	endpoint, err := ParseRelayEndpoint(n.PublicDomain)
+	if err != nil {
+		return
+	}
 	ip := nodeIP(n)
+	if endpointIP := net.ParseIP(endpoint.Host); endpointIP != nil {
+		ip = endpointIP.String()
+	}
 	if ip == "" {
 		return
 	}
 	pctx, cancel := context.WithTimeout(ctx, probeTimeout)
-	res, err := m.deps.Probe(pctx, ip, cfg.ProbePortOrDefault(), n.PublicDomain)
+	res, err := m.deps.Probe(pctx, ip, endpoint.PortOr(cfg.ProbePortOrDefault()), endpoint.Host)
 	cancel()
 	now := m.deps.Now()
 
@@ -305,9 +313,19 @@ type DomainCheck struct {
 // CheckDomain 解析一个域名并和这台的 IP 比较（激活前的核对和每分钟的检查共用）：解析到这台、解析到主节点、解析到别处、解析失败。
 func (m *HealthMonitor) CheckDomain(ctx context.Context, domain, expectedIP string) DomainCheck {
 	out := DomainCheck{State: DomainUnknown, Expected: expectedIP}
+	endpoint, err := ParseRelayEndpoint(domain)
+	if err != nil {
+		out.State = DomainFailed
+		return out
+	}
+	if ip := net.ParseIP(endpoint.Host); ip != nil {
+		out.Resolved = []string{ip.String()}
+		out.State = DomainDirect
+		return out
+	}
 	rctx, cancel := context.WithTimeout(ctx, domainResolveTimeout)
 	defer cancel()
-	addrs, err := m.deps.Lookup(rctx, domain)
+	addrs, err := m.deps.Lookup(rctx, endpoint.Host)
 	if err != nil || len(addrs) == 0 {
 		out.State = DomainFailed
 		return out
@@ -452,6 +470,10 @@ func RealProbe(ctx context.Context, ip string, port int, domain string) (ProbeRe
 // ProbeWithRoots 同 RealProbe，roots 非 nil 时用它代替系统根证书（自建 CA、测试）。
 func ProbeWithRoots(ctx context.Context, ip string, port int, domain string, roots *x509.CertPool) (ProbeResult, error) {
 	var res ProbeResult
+	if endpoint, err := ParseRelayEndpoint(domain); err == nil {
+		domain = endpoint.Host
+		port = endpoint.PortOr(port)
+	}
 	addr := net.JoinHostPort(ip, strconv.Itoa(port))
 	var notAfter time.Time
 	transport := &http.Transport{
@@ -475,7 +497,14 @@ func ProbeWithRoots(ctx context.Context, ip string, port int, domain string, roo
 	}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: probeTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	u := url.URL{Scheme: "https", Host: domain, Path: "/health"}
+	urlHost := domain
+	if parsedIP := net.ParseIP(domain); parsedIP != nil && strings.Contains(domain, ":") {
+		urlHost = "[" + domain + "]"
+	}
+	// DialTLSContext supplies the explicit probe port. Keep the HTTP Host header
+	// as the registered host so existing virtual-host configurations continue to
+	// work when the service listens on a non-default port.
+	u := url.URL{Scheme: "https", Host: urlHost, Path: "/health"}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return res, err

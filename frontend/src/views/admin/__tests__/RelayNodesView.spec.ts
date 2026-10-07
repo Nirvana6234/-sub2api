@@ -24,6 +24,7 @@ const { api, stepUpRun, showError, showSuccess } = vi.hoisted(() => ({
     reclaimNodeQuota: vi.fn(),
     reclaimUserQuota: vi.fn(),
     replaceNode: vi.fn(),
+    updateNodeDomain: vi.fn(),
     keyAssignmentSummary: vi.fn(),
     assignUnassignedKeys: vi.fn(),
     moveKeys: vi.fn(),
@@ -147,6 +148,7 @@ describe('从节点管理页', () => {
       events: [{ kind: 'node_offline', title: '从节点离线', severity: 'critical', default_enabled: true, enabled: true, feishu: true, email: true }]
     })
     api.activateNode.mockResolvedValue(undefined)
+    api.updateNodeDomain.mockResolvedValue(undefined)
     api.drainNode.mockResolvedValue(undefined)
     api.disableNode.mockResolvedValue(undefined)
     api.checkNodeDomain.mockResolvedValue({ state: 'other', resolved: ['198.51.100.1'], expected: '203.0.113.9' })
@@ -186,6 +188,24 @@ describe('从节点管理页', () => {
     expect(api.drainNode).toHaveBeenCalledWith(1)
     expect(showSuccess).toHaveBeenCalled()
     expect(api.listNodes).toHaveBeenCalled()
+  })
+
+  it('从节点列表可以修改域名，并要求确认未匹配的 DNS', async () => {
+    const wrapper = await mounted()
+    await wrapper.get('[data-test="node-1"] [data-test="edit-domain"]').trigger('click')
+    await wrapper.get('[data-test="edit-domain-input"]').setValue('relay-new.example.com')
+    await wrapper.get('[data-test="edit-domain-check"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="edit-domain-ignore-dns"]').exists()).toBe(true)
+    await wrapper.get('[data-test="edit-domain-ignore-dns"]').setValue(true)
+    await wrapper.get('[data-test="edit-domain-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(api.updateNodeDomain).toHaveBeenCalledWith(1, {
+      public_domain: 'relay-new.example.com',
+      ignore_dns_mismatch: true
+    })
   })
 
   it('激活：域名没有解析到这台时必须明确勾选才能提交，成功后关闭对话框', async () => {

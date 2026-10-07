@@ -35,12 +35,15 @@ internal static class ClientOptions
     /// displays it must derive from here rather than restate it; see
     /// <see cref="ViewModels.ClientUpdateViewModel.CurrentVersionText"/>.
     /// </remarks>
-    public static readonly Version CurrentVersion = new(1, 0);
+    public static readonly Version CurrentVersion = new(1, 1);
 
     /// <summary>
     /// The relay this build talks to.
     /// </summary>
-#if LOCAL_SERVER
+#if VM_RELAY_TEST
+    public const string ServerAddress = "http://192.168.216.1:18080/";
+    public const string RelayNodeAddress = "http://192.168.216.1:18081";
+#elif LOCAL_SERVER
     public const string ServerAddress = "http://127.0.0.1:8080/";
 #elif TEST_SERVER
     // 明文：该域名的证书当前不受信任（SSL/TLS 信任关系建立失败），走 https
@@ -51,6 +54,10 @@ internal static class ClientOptions
     public const string ServerAddress = "https://gongfeiai.com/";
 #endif
 
+#if !VM_RELAY_TEST
+    public const string? RelayNodeAddress = null;
+#endif
+
     /// <summary>
     /// Whether 微信消息意图判断 may use the user's own TypeSafe key directly — the phase 1
     /// route, kept for testing only. The local and test channels have it; a production build has
@@ -58,7 +65,7 @@ internal static class ClientOptions
     /// A property rather than a const so callers' branches on it do not trip the unreachable-code
     /// warning; its value is still fixed by the channel at compile time.
     /// </summary>
-#if LOCAL_SERVER || TEST_SERVER
+#if VM_RELAY_TEST || LOCAL_SERVER || TEST_SERVER
     public static bool OwnKeyJevRoute => true;
 #else
     public static bool OwnKeyJevRoute => false;
