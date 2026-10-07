@@ -107,9 +107,19 @@ internal static class CodexModelCatalog
         // gpt template adds a reasoning effort (which the bridge turns into extended
         // thinking), a verbosity setting, a freeform apply_patch tool and a tool-search tool,
         // none of which a Claude model was ever sent, and shrinks nothing in exchange.
-        copy["default_reasoning_level"] = null;
-        copy["supported_reasoning_levels"] = new JsonArray();
-        copy["supports_reasoning_effort_updates"] = false;
+        //
+        // Reasoning levels are the exception for an OpenAI-family model (gpt-*, o-series,
+        // codex-*): those are served by a real OpenAI-compatible upstream that honours the
+        // effort, and without the levels Codex / ChatGPT shows no effort picker and never
+        // sends one — the server then logs every request as having no reasoning effort.
+        // Only the three reasoning fields keep the template's values; everything else above
+        // stays forced off.
+        if (!IsOpenAiFamily(slug))
+        {
+            copy["default_reasoning_level"] = null;
+            copy["supported_reasoning_levels"] = new JsonArray();
+            copy["supports_reasoning_effort_updates"] = false;
+        }
         copy["supports_reasoning_summary_parameter"] = true;
         copy["default_reasoning_summary"] = "auto";
         copy["support_verbosity"] = false;
@@ -124,6 +134,20 @@ internal static class CodexModelCatalog
         copy["include_plugin_usage_instructions"] = false;
         copy["include_apps_usage_instructions"] = false;
         return copy;
+    }
+
+    /// <summary>Whether <paramref name="slug"/> is a model an OpenAI-compatible upstream serves with reasoning effort.</summary>
+    internal static bool IsOpenAiFamily(string slug)
+    {
+        if (string.IsNullOrWhiteSpace(slug))
+        {
+            return false;
+        }
+
+        string id = slug.Trim();
+        return id.StartsWith("gpt-", StringComparison.OrdinalIgnoreCase) ||
+               id.StartsWith("codex-", StringComparison.OrdinalIgnoreCase) ||
+               (id.Length >= 2 && (id[0] is 'o' or 'O') && char.IsDigit(id[1]));
     }
 
     /// <summary><c>claude-sonnet-5</c> as <c>Claude Sonnet 5</c>.</summary>

@@ -569,6 +569,24 @@ macOS 的版本由后台设置 `client_latest_version_mac` 单独控制（当前
 - **Jev 对齐官方**：结构校验、用户并发槽、在途预留、利润控制终检、换号状态机、composite 分组、响应校验；
   保留本地的不审计提示词、按标价入账、4xx 原样回客户端、默认模型列表。
 
+**2026-10-07 EasyPay 伪造回调修复（官方 #7881）**：二进制 `sub2api-20261007-easypay-sign-fix-r1`（`c66dc00cc`），SHA256
+`1d04a2400dbc057ef8536f1e88ae8e39a4ddc94b8d575b150140a89596874c2f`，上一版 `sub2api-20261005-upstream-0.2.13-r2`，无迁移。
+
+- 漏洞：`return_url` 的查询参数被保留进签名串，签名拼接不转义 `&`，下单签名可被复用为「支付成功」回调，不需要商户密钥。
+- 修复（移植官方 `d1aac6b98`）：`CanonicalizeReturnURL` 丢弃客户端查询参数；`VerifyNotification` 只接受易支付异步通知的标准参数。
+- 上线后探测：带 `return_url` 参数的伪造回调返回 400 `verify failed`（日志 `unexpected notify param`）。
+- 排查：线上启用了 EasyPay（ZPay）。115 笔已完成的易支付订单全部带 `payment_trade_no`，且没有「下单后 10 秒内入账」的订单，
+  未发现被利用的迹象（伪造回调不带 trade_no）。
+- 留意：参数白名单较严，若某些易支付变体回调带额外字段，真实回调会被拒，靠「向上游查单」补偿入账；发版后关注已付款未到账的订单。
+
+**2026-10-07 客户端 1.0 重新出包（推理强度修复）**：版本号仍是 1.0。打 tag `client-v1.0` 触发 `client-release` 流水线
+（Windows + macOS，用固定证书签名），产物放到 `download.gongfeiai.com/downloads/`（即 154 机 `/var/www/downloads/`）：
+
+- `codex-relay-client_v1.0_x64.zip`（SHA256 `205dfc98107079cbf4402014e7d8ce86508cef2f2fe789d97f660f617ab822f3`），旧包备份为 `.bak-20261007-before-effort-fix`；
+- `codex-relay-client_v1.0_macos-arm64.tar.gz`（SHA256 `4428e83dbe495f3e6070c8d9a62a090c0c11661b9bd71b2682c11abf8a64da95`），这是第一次有 macOS 1.0 包。
+- 后台设置 `client_download_direct_url_mac` 改为 v1.0 Mac 包、`client_latest_version_mac` 改为 1.0；SQL 改完重启了 sub2api 容器（清 HTML 缓存）。
+- 版本号没变，已装 1.0 的用户**不会**收到更新提示，需要重新下载安装才有推理强度修复。
+
 ## B5. 回滚
 
 bind mount 模式：把 compose 里挂载的文件名改回上一个二进制，重跑 B3 最后那条命令即可。
