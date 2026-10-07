@@ -219,6 +219,8 @@ func TestPawResponsesRouteSeparatesUnknownGroupFromUnavailableModel(t *testing.T
 	w = postResponses(r, `{"model":"no-such-model"}`, map[string]string{PawGroupHeader: "7"})
 	require.Equal(t, http.StatusBadRequest, w.Code)
 	require.Contains(t, w.Body.String(), "MODEL_UNAVAILABLE")
+	// 分组里没有这个模型时，建议用户开启自动分组（它会按模型选出支持的分组）。
+	require.Contains(t, w.Body.String(), "自动分组")
 }
 
 // 这条钉的是一个**已经犯过一次的错**：照搬 chat 那条的 reasoning 校验。

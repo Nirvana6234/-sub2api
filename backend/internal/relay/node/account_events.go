@@ -258,7 +258,8 @@ func (r *RemoteAccountReporter) UpdateSessionWindow(_ context.Context, account *
 }
 
 func (r *RemoteAccountReporter) OllamaCloudUsageActivity(account *service.Account) {
-	if account == nil || !service.IsOllamaCloudUsageAccount(account) {
+	// OpenCode Go 账号用同一个事件：主节点的本机实现里两种账号各自判定。
+	if account == nil || (!service.IsOllamaCloudUsageAccount(account) && !service.IsOpenCodeGoUsageAccount(account)) {
 		return
 	}
 	r.send(&relayv1.AccountEvent{AccountId: account.ID, Kind: &relayv1.AccountEvent_OllamaActivity{OllamaActivity: &relayv1.OllamaActivityEvent{}}})

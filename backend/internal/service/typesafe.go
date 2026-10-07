@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/typesafe"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 )
@@ -146,12 +148,15 @@ func (s *GatewayService) ForwardTypeSafeSystemOne(ctx context.Context, c *gin.Co
 		return nil, &UpstreamFailoverError{StatusCode: http.StatusBadGateway, Reason: GatewayFailureReason("typesafe_transport")}
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 400 {
+		return s.relayTypeSafeSuccess(c, account, resp, model, start)
+	}
 	respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, typeSafeMaxResponseBytes))
 	if readErr != nil {
 		return nil, &UpstreamFailoverError{StatusCode: http.StatusBadGateway, Reason: GatewayFailureReason("typesafe_read")}
 	}
 
-	if resp.StatusCode >= 400 {
+	{
 		if typeSafeShouldFailover(resp.StatusCode) {
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 				Platform:           account.Platform,
@@ -165,24 +170,68 @@ func (s *GatewayService) ForwardTypeSafeSystemOne(ctx context.Context, c *gin.Co
 			if s.accountState() != nil && resp.StatusCode != 529 {
 				s.accountState().HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
 			}
-			return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: respBody, ResponseHeaders: resp.Header.Clone()}
+			failoverErr := &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: respBody, ResponseHeaders: resp.Header.Clone()}
+			if resp.StatusCode == http.StatusUnauthorized {
+				// 账号自己的 key 被 TypeSafe 拒了：只是这个号不能用，换号重试。
+				failoverErr.Stage = GatewayFailureStageAccountAuth
+				failoverErr.Scope = GatewayFailureScopeAccount
+				failoverErr.Reason = TypeSafeCredentialRejectedReason
+				failoverErr.NextAccountAction = NextAccountRetry
+			}
+			return nil, failoverErr
 		}
 		writeTypeSafeResponse(c, resp.StatusCode, resp.Header, respBody)
 		return nil, &TypeSafeClientError{StatusCode: resp.StatusCode}
 	}
+}
 
-	writeTypeSafeResponse(c, resp.StatusCode, resp.Header, respBody)
+// TypeSafeCredentialRejectedReason 标记「TypeSafe 拒绝了这个账号的 API Key」。
+const TypeSafeCredentialRejectedReason GatewayFailureReason = "typesafe_api_key_rejected"
+
+// relayTypeSafeSuccess 校验并原样转发 2xx 响应。响应体必须是合法 JSON 且不超过大小
+// 上限，否则不写给客户端、不入账（上游可能已计费，留运维错误记录供对账）。
+func (s *GatewayService) relayTypeSafeSuccess(c *gin.Context, account *Account, resp *http.Response, model string, start time.Time) (*ForwardResult, error) {
+	decoded, err := typesafe.DecodeSystemOneResponse(resp.Body)
+	if err != nil {
+		setOpsUpstreamError(c, resp.StatusCode, err.Error(), "")
+		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			Passthrough:        true,
+			ProxyID:            opsUpstreamProxyID(account),
+			ProxyName:          opsUpstreamProxyName(account),
+			Platform:           account.Platform,
+			AccountID:          account.ID,
+			AccountName:        account.Name,
+			UpstreamStatusCode: resp.StatusCode,
+			UpstreamRequestID:  resp.Header.Get("x-request-id"),
+			Kind:               "response_error",
+			Message:            err.Error(),
+		})
+		return nil, err
+	}
+	header := resp.Header.Clone()
+	header.Set("Content-Type", typeSafeResponseContentType(resp.Header.Get("Content-Type")))
+	writeTypeSafeResponse(c, resp.StatusCode, header, decoded.Body)
 	return &ForwardResult{
-		RequestID:       firstNonEmptyString(resp.Header.Get("x-request-id"), resp.Header.Get("request-id")),
-		UpstreamHeaders: resp.Header,
-		Usage: ClaudeUsage{
-			InputTokens:  int(gjson.GetBytes(respBody, "usage.input_tokens").Int()),
-			OutputTokens: int(gjson.GetBytes(respBody, "usage.output_tokens").Int()),
-		},
+		RequestID:             firstNonEmptyString(resp.Header.Get("x-request-id"), resp.Header.Get("request-id")),
+		UpstreamHeaders:       resp.Header,
+		Usage:                 ClaudeUsage{InputTokens: decoded.Usage.InputTokens, OutputTokens: decoded.Usage.OutputTokens},
 		Model:                 model,
-		UpstreamResponseModel: strings.TrimSpace(gjson.GetBytes(respBody, "model").String()),
+		UpstreamResponseModel: decoded.Model,
 		Duration:              time.Since(start),
 	}, nil
+}
+
+// typeSafeResponseContentType 保留上游的 JSON 媒体类型（含 charset），但对已校验为
+// JSON 的响应体绝不转发非 JSON 类型，避免网关源站被诱导按 HTML 提供。
+func typeSafeResponseContentType(raw string) string {
+	mediaType, _, err := mime.ParseMediaType(strings.TrimSpace(raw))
+	if err != nil {
+		return "application/json"
+	}
+	if mediaType == "application/json" || (strings.HasPrefix(mediaType, "application/") && strings.HasSuffix(mediaType, "+json")) {
+		return strings.TrimSpace(raw)
+	}
+	return "application/json"
 }
 
 // writeTypeSafeResponse 原样写回上游的状态码和响应体，只带 Content-Type 和 Retry-After。

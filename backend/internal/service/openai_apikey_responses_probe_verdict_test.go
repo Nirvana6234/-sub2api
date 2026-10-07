@@ -140,14 +140,6 @@ func TestProbeOpenAIAPIKeyResponsesSupport_ConclusiveResponsesStillPersist(t *te
 			want:   true,
 		},
 		{
-			// 上游是另一台 sub2api、分组里没有探测模型：端点在，只是模型不在。
-			// 落成 false 会把账号长期钉在 CC 直转上（2026-09-25 本机实测）。
-			name:   "model_not_found_404_keeps_responses",
-			status: http.StatusNotFound,
-			body:   sub2apiModelNotFoundBody,
-			want:   true,
-		},
-		{
 			name:   "endpoint_absent_404",
 			status: http.StatusNotFound,
 			body:   `{"error":{"message":"Not Found"}}`,
@@ -175,6 +167,12 @@ func TestProbeOpenAIAPIKeyResponsesSupport_ConclusiveResponsesStillPersist(t *te
 			require.Equal(t, tc.want, updates[openai_compat.ExtraKeyResponsesSupported])
 		})
 	}
+}
+
+// 上游是另一台 sub2api、分组里没有探测模型：端点在，只是模型不在。这种响应不构成能力
+// 证据，不落标（既不能落成 false 把账号钉在 CC 直转上，也不凭它断定工具能力）。
+func TestProbeOpenAIAPIKeyResponsesSupport_ModelNotFoundDoesNotWriteVerdict(t *testing.T) {
+	require.Nil(t, runResponsesProbe(t, http.StatusNotFound, sub2apiModelNotFoundBody))
 }
 
 func TestResponsesProbeVerdictIsConclusive(t *testing.T) {
@@ -254,42 +252,43 @@ func runModelKeyedProbe(t *testing.T, mapping map[string]any, upstream *modelKey
 	}
 }
 
-// 映射里字典序最前的模型上游没有（2026-09-25 本机：codex-auto-review），探测应换下一个
-// 真有的模型去验证工具能力，而不是拿 model-not-found 草草下结论。
+// 优先探测的通用 GPT 文本模型（gpt-6-astra）上游没有（2026-09-25 本机：上游是另一台
+// sub2api），探测应换下一个真有的模型去验证工具能力，而不是拿 model-not-found 草草下结论。
 func TestProbeOpenAIAPIKeyResponsesSupport_SkipsModelsTheUpstreamLacks(t *testing.T) {
 	mapping := map[string]any{"codex-auto-review": "codex-auto-review", "gpt-6-astra": "gpt-6-astra"}
+	order := []string{"gpt-6-astra", "codex-auto-review"}
 
 	t.Run("next_model_confirms_tools", func(t *testing.T) {
 		upstream := &modelKeyedProbeUpstream{replies: map[string]probeReply{
-			"gpt-6-astra": {http.StatusOK, `{"status":"completed","output":[{"type":"function_call","name":"probe_ping"}]}`},
+			"codex-auto-review": {http.StatusOK, `{"status":"completed","output":[{"type":"function_call","name":"probe_ping"}]}`},
 		}}
 		updates := runModelKeyedProbe(t, mapping, upstream)
-		require.Equal(t, []string{"codex-auto-review", "gpt-6-astra"}, upstream.tried)
+		require.Equal(t, order, upstream.tried)
 		require.Equal(t, true, updates[openai_compat.ExtraKeyResponsesSupported])
 	})
 
 	t.Run("next_model_exposes_broken_tools", func(t *testing.T) {
 		upstream := &modelKeyedProbeUpstream{replies: map[string]probeReply{
-			"gpt-6-astra": {http.StatusOK, `{"status":"completed","output":[{"type":"reasoning"}]}`},
+			"codex-auto-review": {http.StatusOK, `{"status":"completed","output":[{"type":"reasoning"}]}`},
 		}}
 		updates := runModelKeyedProbe(t, mapping, upstream)
-		require.Equal(t, []string{"codex-auto-review", "gpt-6-astra"}, upstream.tried)
+		require.Equal(t, order, upstream.tried)
 		require.Equal(t, false, updates[openai_compat.ExtraKeyResponsesSupported])
 	})
 
-	t.Run("no_model_available_endpoint_still_exists", func(t *testing.T) {
+	t.Run("no_model_available_writes_no_verdict", func(t *testing.T) {
 		upstream := &modelKeyedProbeUpstream{}
 		updates := runModelKeyedProbe(t, mapping, upstream)
-		require.Equal(t, []string{"codex-auto-review", "gpt-6-astra"}, upstream.tried)
-		require.Equal(t, true, updates[openai_compat.ExtraKeyResponsesSupported])
+		require.Equal(t, order, upstream.tried)
+		require.Nil(t, updates, "全部候选都是 model-not-found：不下结论，保持 unknown")
 	})
 
 	t.Run("route_absent_stops_at_first_model", func(t *testing.T) {
 		upstream := &modelKeyedProbeUpstream{replies: map[string]probeReply{
-			"codex-auto-review": {http.StatusNotFound, ginRouteNotFoundBody},
+			"gpt-6-astra": {http.StatusNotFound, ginRouteNotFoundBody},
 		}}
 		updates := runModelKeyedProbe(t, mapping, upstream)
-		require.Equal(t, []string{"codex-auto-review"}, upstream.tried)
+		require.Equal(t, []string{"gpt-6-astra"}, upstream.tried)
 		require.Equal(t, false, updates[openai_compat.ExtraKeyResponsesSupported])
 	})
 

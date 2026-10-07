@@ -859,6 +859,15 @@ func (r *userRepository) filterUsersByAttributes(ctx context.Context, attrs map[
 }
 
 func (r *userRepository) UpdateBalance(ctx context.Context, id int64, amount float64) error {
+	// 充值余额有效期：加款前先把已花掉的部分摊给到期批次，加款后把增量记入永久部分。
+	// 充值本身（兑换码）会在之后由 BalanceExpiryService.RecordRecharge 重新算永久部分并记批次。
+	var guard *service.BalanceCreditGuard
+	if amount > 0 {
+		var err error
+		if guard, err = service.BeginBalanceCredit(ctx, r.client, id); err != nil {
+			return err
+		}
+	}
 	client := clientFromContext(ctx, r.client)
 	update := client.User.Update().Where(dbuser.IDEQ(id)).AddBalance(amount)
 	// Track cumulative recharge amount for percentage-based notifications
@@ -872,7 +881,7 @@ func (r *userRepository) UpdateBalance(ctx context.Context, id int64, amount flo
 	if n == 0 {
 		return service.ErrUserNotFound
 	}
-	return nil
+	return guard.Done(ctx, amount)
 }
 
 func (r *userRepository) ApplyRedeemBalanceAdjustment(ctx context.Context, id int64, delta float64) error {
@@ -881,6 +890,13 @@ func (r *userRepository) ApplyRedeemBalanceAdjustment(ctx context.Context, id in
 		SET balance = GREATEST(balance + $1, 0), updated_at = NOW()
 		WHERE id = $2 AND deleted_at IS NULL
 	`
+	var guard *service.BalanceCreditGuard
+	if delta > 0 {
+		var err error
+		if guard, err = service.BeginBalanceCredit(ctx, r.client, id); err != nil {
+			return err
+		}
+	}
 	client := clientFromContext(ctx, r.client)
 	result, err := client.ExecContext(ctx, updateSQL, delta, id)
 	if err != nil {
@@ -893,7 +909,7 @@ func (r *userRepository) ApplyRedeemBalanceAdjustment(ctx context.Context, id in
 	if affected == 0 {
 		return service.ErrUserNotFound
 	}
-	return nil
+	return guard.Done(ctx, delta)
 }
 
 // DeductBalance 扣除用户余额
@@ -974,6 +990,13 @@ func (r *userRepository) DeductAvailableBalance(ctx context.Context, id int64, a
 // 并发的计费扣款不会被旧快照覆盖。
 func (r *userRepository) AdjustBalance(ctx context.Context, id int64, delta float64) (service.BalanceChange, error) {
 	// 扣减不能动到锁在主从分流从节点上的余额（relay_reserved_balance，设计 4.3、4.4）。
+	var guard *service.BalanceCreditGuard
+	if delta > 0 {
+		var err error
+		if guard, err = service.BeginBalanceCredit(ctx, r.client, id); err != nil {
+			return service.BalanceChange{}, err
+		}
+	}
 	const updateSQL = `
 		UPDATE users
 		SET balance = balance + $1, updated_at = NOW()
@@ -986,7 +1009,7 @@ func (r *userRepository) AdjustBalance(ctx context.Context, id int64, delta floa
 		return service.BalanceChange{}, err
 	}
 	if ok {
-		return change, nil
+		return change, guard.Done(ctx, delta)
 	}
 
 	// 0 行可能是用户不存在、余额不足以承受这次扣减，或者要扣的钱锁在从节点上，需要区分。
@@ -1012,6 +1035,10 @@ func (r *userRepository) SetBalance(ctx context.Context, id int64, value float64
 		return service.BalanceChange{Old: current, New: value}, service.ErrBalanceNegative
 	}
 	// 往下设不能低于锁在主从分流从节点上的余额（设计 4.3、4.4）；往上设不受限。
+	guard, err := service.BeginBalanceCredit(ctx, r.client, id)
+	if err != nil {
+		return service.BalanceChange{}, err
+	}
 	const updateSQL = `
 		UPDATE users AS u
 		SET balance = $1, updated_at = NOW()
@@ -1031,7 +1058,8 @@ func (r *userRepository) SetBalance(ctx context.Context, id int64, value float64
 		}
 		return service.BalanceChange{Old: current, New: value}, service.ErrBalanceLockedOnRelay
 	}
-	return change, nil
+	// 调高余额的部分算永久；调低的部分是消耗，下次对账时按先到期先扣摊给批次。
+	return change, guard.Done(ctx, change.New-change.Old)
 }
 
 // currentBalance 读取用户当前余额，用户不存在时返回 ErrUserNotFound。

@@ -152,6 +152,18 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		}
 	}
 
+	// 余额模式在途预留（与计费同口径估算；计费任务扣减余额缓存后才释放）。
+	inflightDone, inflightErr := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, service.InflightEstimateRequest{Model: routingModel, BodyBytes: len(body), Kind: service.InflightEstimateImage, Units: parsed.N})
+	if inflightErr != nil {
+		status, code, message, retryAfter := billingErrorDetails(inflightErr)
+		if retryAfter > 0 {
+			c.Header("Retry-After", strconv.Itoa(retryAfter))
+		}
+		h.handleStreamingAwareError(c, status, code, message, streamStarted)
+		return
+	}
+	defer inflightDone()
+
 	sessionHash := h.gatewayService.GenerateExplicitSessionHash(c, body)
 	requestCtx := service.WithOpenAIImagesEndpoint(service.WithOpenAIImageGenerationIntent(c.Request.Context()))
 
@@ -173,7 +185,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		var outcome OpenAISelectOutcome
 		if h.relay != nil {
 			res := h.relay.Select(c, OpenAIRelaySelectRequest{
-				Images: true, ImagesCapability: string(parsed.RequiredCapability), APIKey: apiKey, Model: routingModel, Stream: parsed.Stream,
+				Images: true, ImagesCapability: string(parsed.RequiredCapabilityForModel(channelMapping.MappedModel)), APIKey: apiKey, Model: routingModel, Stream: parsed.Stream,
 				SessionHash: sessionHash, Excluded: failedAccountIDs, Body: body,
 			})
 			if res.Rejection != nil && !res.Rejection.AutoGroupFailover {
@@ -199,7 +211,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 				SessionHash:      sessionHash,
 				ForwardModel:     routingModel,
 				RequestPlatform:  service.PlatformOpenAI,
-				ImagesCapability: parsed.RequiredCapability,
+				ImagesCapability: parsed.RequiredCapabilityForModel(channelMapping.MappedModel),
 				Excluded:         failedAccountIDs,
 				OnTick:           onTick,
 				CannotWait:       cannotWait,

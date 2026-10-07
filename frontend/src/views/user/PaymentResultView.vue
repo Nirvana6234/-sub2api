@@ -55,7 +55,11 @@
               <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.payAmount') }}</span>
               <span class="font-bold text-primary-600 dark:text-primary-400">{{ formatGatewayAmount(order.pay_amount) }}</span>
             </div>
-            <div v-if="hasAmountFields(order) && order.amount !== order.pay_amount" class="flex justify-between">
+            <div v-if="hasAmountFields(order) && orderBonusAmount(order) > 0" class="flex justify-between">
+              <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.bonusAmount') }}</span>
+              <span class="font-medium text-amber-600 dark:text-amber-400">+${{ orderBonusAmount(order).toFixed(2) }}</span>
+            </div>
+            <div v-if="hasAmountFields(order) && (order.amount !== order.pay_amount || orderBonusAmount(order) > 0)" class="flex justify-between">
               <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.creditedAmount') }}</span>
               <span class="font-medium text-gray-900 dark:text-white">{{ order.order_type === 'balance' ? '$' + order.amount.toFixed(2) : formatGatewayAmount(order.amount) }}</span>
             </div>
@@ -66,6 +70,11 @@
             <div class="flex justify-between">
               <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.status') }}</span>
               <OrderStatusBadge :status="displayOrderStatus(order.status)" />
+            </div>
+            <!-- 充值余额有效期：到账后标出这笔余额的到期时间 -->
+            <div v-if="balanceExpiresAt" class="flex justify-between">
+              <span class="text-gray-500 dark:text-gray-400">{{ t('balanceExpiry.orderColumn') }}</span>
+              <span class="font-medium text-amber-600 dark:text-amber-400">{{ formatBalanceExpiry(balanceExpiresAt) }}</span>
             </div>
           </div>
         </div>
@@ -124,6 +133,17 @@ const authStore = useAuthStore()
 type ResolvedOrder = PaymentOrder | PublicOrderVerifyResult
 
 const order = ref<ResolvedOrder | null>(null)
+
+const balanceExpiresAt = computed(() => {
+  const current = order.value
+  return current && 'balance_expires_at' in current ? current.balance_expires_at ?? '' : ''
+})
+
+function formatBalanceExpiry(iso: string): string {
+  const d = new Date(iso)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
 const loading = ref(true)
 const currency = ref('CNY')
 
@@ -223,6 +243,12 @@ function hasOrderId(nextOrder: ResolvedOrder | null): nextOrder is PaymentOrder 
 
 function hasAmountFields(nextOrder: ResolvedOrder | null): nextOrder is PaymentOrder {
   return !!nextOrder && 'pay_amount' in nextOrder && typeof nextOrder.pay_amount === 'number' && 'amount' in nextOrder && typeof nextOrder.amount === 'number'
+}
+
+/** 充值赠送额度（USD）；老接口/订阅订单没有该字段时视为 0 */
+function orderBonusAmount(target: unknown): number {
+  const value = (target as { bonus_amount?: unknown } | null | undefined)?.bonus_amount
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0
 }
 
 function hasPaymentType(nextOrder: ResolvedOrder | null): nextOrder is PaymentOrder {

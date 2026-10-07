@@ -70,6 +70,10 @@ func (s *selector) selectGeminiNative(ctx context.Context, nodeID int64, req *re
 
 	// 渠道映射在选号之前（本地先映射，再用映射后的模型选号、转发）。
 	channelMapping, _ := gw.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, reqModel)
+	if err := s.deps.Gateway.CheckBillablePricing(ctx, apiKey, reqModel, channelMapping.MappedModel); err != nil {
+		slog.Warn("relay: model pricing is not available", "model", reqModel, "error", err)
+		return gatewayRejection(handler.GeminiPricingUnavailableRejection()), nil
+	}
 	selectModel := reqModel
 	if channelMapping.Mapped {
 		selectModel = channelMapping.MappedModel

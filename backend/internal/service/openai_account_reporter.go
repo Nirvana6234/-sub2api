@@ -23,7 +23,7 @@ type OpenAIAccountReporter interface {
 	UpdateCodexUsageSnapshot(ctx context.Context, accountID int64, snapshot *OpenAICodexUsageSnapshot)
 	// TempUnscheduleTransportError 持久的传输错误让账号临时不可调度。
 	TempUnscheduleTransportError(ctx context.Context, account *Account, safeErr string)
-	// OllamaCloudUsageActivity 记一次 Ollama Cloud 账号的用量活动。
+	// OllamaCloudUsageActivity 记一次 Ollama Cloud / OpenCode Go 账号的用量活动。
 	OllamaCloudUsageActivity(account *Account)
 	// UpdateSessionWindow 按上游响应头（anthropic-ratelimit-unified-5h-*）更新账号的 5 小时会话窗口
 	// （Anthropic 原生直通路径，原 rateLimitService.UpdateSessionWindow）。
@@ -86,6 +86,7 @@ func (r localOpenAIAccountReporter) OllamaCloudUsageActivity(account *Account) {
 		return
 	}
 	scheduleOllamaCloudUsageActivity(r.s.deferredService, account)
+	scheduleOpenCodeGoUsageActivity(r.s.deferredService, account)
 }
 
 func (r localOpenAIAccountReporter) UpdateSessionWindow(ctx context.Context, account *Account, headers http.Header) {

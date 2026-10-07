@@ -24,7 +24,7 @@ func TestOpenAISchedulingRateUsesManualRateFirst(t *testing.T) {
 			now.Add(-time.Minute), 30*time.Minute)
 		account.Extra[UpstreamBillingManualRateMultiplierExtraKey] = 0.04
 
-		rate, ok := openAISchedulingRate(account, now, 1.0)
+		rate, ok := openAISchedulingRate(account, now, floatPtr(1.0))
 		require.True(t, ok)
 		require.InDelta(t, 0.04, rate, 1e-9,
 			"管理员的手工声明是权威值，不得被探测覆盖——记账也是这个口径")
@@ -35,7 +35,7 @@ func TestOpenAISchedulingRateUsesManualRateFirst(t *testing.T) {
 		account := &Account{ID: 120, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
 			Extra: map[string]any{UpstreamBillingManualRateMultiplierExtraKey: 0.075}}
 
-		rate, ok := openAISchedulingRate(account, now, 1.0)
+		rate, ok := openAISchedulingRate(account, now, floatPtr(1.0))
 		require.True(t, ok,
 			"填了手工倍率的自营号必须能参与成本比较，否则成本权重只在中转号之间分配")
 		require.InDelta(t, 0.075, rate, 1e-9)
@@ -45,29 +45,29 @@ func TestOpenAISchedulingRateUsesManualRateFirst(t *testing.T) {
 		account := upstreamCostTestAccount(221, UpstreamBillingProbeStatusOK, 0.06,
 			now.Add(-time.Minute), 30*time.Minute)
 
-		rate, ok := openAISchedulingRate(account, now, 1.0)
+		rate, ok := openAISchedulingRate(account, now, floatPtr(1.0))
 		require.True(t, ok)
 		require.InDelta(t, 0.06, rate, 1e-9)
 	})
 
 	t.Run("既无手工倍率也无新鲜探测就没有样本", func(t *testing.T) {
 		account := &Account{ID: 999, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
-			Extra: map[string]any{}}
-		_, ok := openAISchedulingRate(account, now, 1.0)
+			RateMultiplierUndeclared: true, Extra: map[string]any{}}
+		_, ok := openAISchedulingRate(account, now, floatPtr(1.0))
 		require.False(t, ok, "建表默认的列值不是成本声明，不能拿来排序")
 	})
 
 	t.Run("非法手工倍率不算声明", func(t *testing.T) {
 		account := &Account{ID: 998, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
-			Extra: map[string]any{UpstreamBillingManualRateMultiplierExtraKey: -1.0}}
-		_, ok := openAISchedulingRate(account, now, 1.0)
+			RateMultiplierUndeclared: true, Extra: map[string]any{UpstreamBillingManualRateMultiplierExtraKey: -1.0}}
+		_, ok := openAISchedulingRate(account, now, floatPtr(1.0))
 		require.False(t, ok)
 	})
 
 	t.Run("OAuth 账号仍走统一倍率", func(t *testing.T) {
 		account := &Account{ID: 97, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
 			Extra: map[string]any{UpstreamBillingManualRateMultiplierExtraKey: 0.04}}
-		rate, ok := openAISchedulingRate(account, now, 1.0)
+		rate, ok := openAISchedulingRate(account, now, floatPtr(1.0))
 		require.True(t, ok)
 		require.InDelta(t, 1.0, rate, 1e-9, "OAuth 分支的既有语义不变")
 	})
@@ -88,7 +88,7 @@ func TestUpstreamCostFactorsCoverManualRateAccounts(t *testing.T) {
 			now.Add(-time.Minute), 30*time.Minute),
 	}
 
-	factors := openAIUpstreamCostFactors(accounts, now, 1.0)
+	factors := openAIUpstreamCostFactors(accounts, now, floatPtr(1.0))
 
 	require.Greater(t, factors[155], factors[120],
 		"0.04 的号必须比 0.075 的号拿到更高的成本因子")

@@ -11,7 +11,8 @@ import type {
   CheckoutInfoResponse,
   CreateOrderRequest,
   CreateOrderResult,
-  PaymentOrder
+  PaymentOrder,
+  BalanceExpiryView
 } from '@/types/payment'
 import type { BasePaginationResponse } from '@/types'
 
@@ -34,6 +35,11 @@ export interface PublicOrderVerifyResult {
 }
 
 export const paymentAPI = {
+  /** Balance split into permanent part and expiring recharge lots, with expiry dates */
+  getBalanceExpiry() {
+    return apiClient.get<BalanceExpiryView>('/payment/balance-expiry')
+  },
+
   /** Get payment configuration (enabled types, limits, etc.) */
   getConfig() {
     return apiClient.get<PaymentConfig>('/payment/config')

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler"
@@ -14,8 +13,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// selectSystemOne 按本地 GatewayHandler.SystemOne（TypeSafe 的 Jev 判断请求）的顺序：中间件复查 → 模型有没有价格 → 计费资格（没有用户
-// 并发槽）→ 选号与准入（一轮，不带会话）。换号状态（已失败的账号、最多换几次）在从节点的处理函数里。
+// selectSystemOne 按本地 GatewayHandler.SystemOne（TypeSafe 的 Jev 判断请求）的顺序：中间件复查 → 模型有没有价格 → 计价上下文
+// （固定计价时间）→ 渠道映射 → 用户并发槽 → 计费资格 → 选号与准入（一轮，不带会话，装利润门）。换号状态（已失败的账号）在从节点的
+// 处理函数里，最多换几次由主节点的 gateway.max_account_switches 随选号带下来。
 //
 // 准入失败（没有等待计划、队列满、抢槽出错）：第一次尝试时按并发错误回给客户端，之后的尝试只把这个账号排除再选（本地同样），
 // 这里分别回 Gateway 拒绝和"否决"格式（从节点把它当成"排除这个账号接着选"）。错误由从节点按 TypeSafe 自己的格式写（code 在
@@ -36,6 +36,7 @@ func (s *selector) selectSystemOne(ctx context.Context, nodeID int64, req *relay
 	model := req.GetModel()
 	subscription := adm.Billing.Subscription
 	quotaReq := service.QuotaRequest{User: apiKey.User, APIKey: apiKey, Group: apiKey.Group, Subscription: subscription, Platform: service.QuotaPlatform(ctx, apiKey)}
+	channelMapping, _ := gw.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, model)
 
 	record, first, err := s.requestFor(nodeID, req.GetRequestId())
 	if err != nil {
@@ -58,13 +59,13 @@ func (s *selector) selectSystemOne(ctx context.Context, nodeID int64, req *relay
 		if !gw.HasTypeSafePricing(ctx, model, apiKey) {
 			return gatewayRejection(handler.OpenAIGatewayRejection{Status: http.StatusServiceUnavailable, ErrType: "api_error", Code: "PRICING_UNAVAILABLE", Message: "Pricing is not configured for this model"}), nil
 		}
-		if err := s.checkBilling(ctx, nodeID, req.GetHeldQuota(), apiKey, subscription, quotaReq.Platform); err != nil {
-			r := billingRejection(err, false)
-			r.Code = strings.ToUpper(r.ErrType)
-			return gatewayRejection(r), nil
+		// 用户并发槽、计费资格；计价时间在请求开头固定（本地 service.WithGatewayTokenRequestPricing），入账时按它计价。
+		pricing := func(ctx context.Context, _ *int64) (context.Context, time.Time) {
+			return service.WithGatewayTokenRequestPricing(ctx)
 		}
-		// 不装利润门、不固定计价时间（入账时按当时的价）。
-		record.pricingCtx, record.pricingAt = context.WithoutCancel(ctx), time.Time{}
+		if rej := s.startRequest(ctx, record, req, adm, quotaReq, false, false, pricing); rej != nil {
+			return rej, nil
+		}
 	}
 
 	attemptCtx, cancel := context.WithCancel(record.pricingCtx)
@@ -76,7 +77,7 @@ func (s *selector) selectSystemOne(ctx context.Context, nodeID int64, req *relay
 		excluded[id] = struct{}{}
 	}
 	outcome := s.anthropicAdmitter.SelectAndAdmit(attemptCtx, handler.AnthropicSelectRequest{
-		GroupID: apiKey.GroupID, Model: model, Excluded: excluded, NoProfitVeto: true,
+		GroupID: apiKey.GroupID, Model: model, Excluded: excluded,
 	}, zap.NewNop())
 	if ctx.Err() != nil {
 		if outcome.Kind == handler.AnthropicSelected && outcome.Release != nil {
@@ -94,8 +95,7 @@ func (s *selector) selectSystemOne(ctx context.Context, nodeID int64, req *relay
 				Format: relayv1.RejectionFormat_REJECTION_FORMAT_FAILOVER_EXHAUSTED, AnthropicMessages: true,
 			}}}, nil
 		}
-		return gatewayRejection(handler.OpenAIGatewayRejection{Status: http.StatusServiceUnavailable, ErrType: "api_error", Code: "NO_AVAILABLE_ACCOUNTS",
-			Message: "No available accounts", RoutingCapacityLimited: true}), nil
+		return gatewayRejection(handler.TypeSafeFirstSelectFailureRejection(ctx, gw, apiKey, model, outcome.Err)), nil
 	default:
 		// 准入失败：第一次尝试按并发错误回给客户端（只有抢槽出错时）；其余把这个账号排除接着选。
 		if outcome.Kind == handler.AnthropicSelectSlotError && req.GetAttempt() <= 1 {
@@ -116,10 +116,10 @@ func (s *selector) selectSystemOne(ctx context.Context, nodeID int64, req *relay
 	sel := &selectionRecord{
 		id: newSelectionID(), nodeID: nodeID, request: record, account: outcome.Account, release: outcome.Release,
 		createdAt: s.now(), quota: quotaReq, groupID: groupIDOf(apiKey), userID: apiKey.User.ID, apiKeyID: apiKey.ID, apiKey: apiKey,
-		channelGroupID: groupIDOf(apiKey), omitChannelFields: true,
+		channelGroupID: groupIDOf(apiKey),
 	}
 	picked := handler.OpenAISelectOutcome{Kind: handler.OpenAISelected, Account: outcome.Account, Ctx: outcome.Ctx}
-	resp, brej, err := s.buildSelection(ctx, nodeID, req, sel, picked, model, model, service.ChannelMappingResult{}, subscription, false)
+	resp, brej, err := s.buildSelection(ctx, nodeID, req, sel, picked, model, model, channelMapping, subscription, false)
 	if err == nil && brej == nil && ctx.Err() != nil {
 		s.ungrant(sel.userID, nodeID, resp.GetSelection().GetGrants())
 		err = ctx.Err()
@@ -134,10 +134,13 @@ func (s *selector) selectSystemOne(ctx context.Context, nodeID int64, req *relay
 		return nil, err
 	}
 	resp.GetSelection().MaxAccountSwitches = int32(typeSafeMaxAccountSwitches)
+	if cfg := s.deps.Config; cfg != nil && cfg.Gateway.MaxAccountSwitches > 0 {
+		resp.GetSelection().MaxAccountSwitches = int32(cfg.Gateway.MaxAccountSwitches)
+	}
 	s.addSelection(sel)
 	selected = true
 	return resp, nil
 }
 
-// typeSafeMaxAccountSwitches 是一次 Jev 请求最多换几次号（与本地 typeSafeMaxAccountSwitches 一致）。
-const typeSafeMaxAccountSwitches = 3
+// typeSafeMaxAccountSwitches 是没配置 gateway.max_account_switches 时的换号上限（与 NewGatewayHandler 的默认值一致）。
+const typeSafeMaxAccountSwitches = anthropicDefaultMaxAccountSwitches

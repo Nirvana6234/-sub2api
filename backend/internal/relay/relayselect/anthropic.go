@@ -85,6 +85,9 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 	log := zap.NewNop()
 
 	channelMapping, _ := gw.ResolveChannelMappingAndRestrict(ctx, origKey.GroupID, reqModel)
+	if rej := s.pricingRejection(ctx, req, apiKey, !compat, channelMapping); rej != nil {
+		return rej, nil
+	}
 	forwardModel := reqModel
 	if channelMapping.Mapped {
 		forwardModel = channelMapping.MappedModel

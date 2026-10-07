@@ -97,6 +97,15 @@ func (s *PaymentOrderExpiryService) runOnce() {
 	}
 	defer release()
 
+	// 充值余额有效期：先清零到期的余额。放在支付对账前面，支付网关慢或报错时也不耽误清零。
+	sweepCtx, sweepCancel := context.WithTimeout(context.Background(), expiryCheckTimeout)
+	if lots, amount, sweepErr := s.paymentSvc.BalanceExpiry().SweepExpired(sweepCtx); sweepErr != nil {
+		slog.Error("[BalanceExpiry] sweep failed", "error", sweepErr)
+	} else if lots > 0 {
+		slog.Info("[BalanceExpiry] expired recharge balance", "lots", lots, "amount", amount)
+	}
+	sweepCancel()
+
 	reconcileCtx, cancel := context.WithTimeout(context.Background(), expiryCheckTimeout)
 	recovered, err := s.paymentSvc.ReconcilePendingPaymentOrders(reconcileCtx)
 	cancel()

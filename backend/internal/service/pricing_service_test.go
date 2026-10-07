@@ -982,6 +982,7 @@ func TestParsePricingData_DerivesLongContextFromAboveTierFields(t *testing.T) {
 			"output_cost_per_token_above_272k_tokens": 3e-05},
 		"cache-only-above": {"litellm_provider": "openai", "mode": "chat",
 			"input_cost_per_token": 5e-06, "output_cost_per_token": 3e-05,
+			"cache_read_input_token_cost": 5e-07,
 			"cache_read_input_token_cost_above_272k_tokens": 1e-06},
 		"multi-threshold": {"litellm_provider": "openai", "mode": "chat",
 			"input_cost_per_token": 1e-06, "output_cost_per_token": 2e-06,
@@ -1038,7 +1039,7 @@ func TestParsePricingData_ExplicitZeroThresholdDisablesLadder(t *testing.T) {
 }
 
 // cache 侧 above 档随输入倍率计费、不单独折算；缺基础价的 cache above 字段无法参与计费，
-// 该缓存分项按 0 计，属于数据契约违规，必须有哨兵 WARN。服务档变体缺基础价时回落
+// 该缓存分项按 0 计，属于数据契约违规：条目被排除并打 ERROR 哨兵。服务档变体缺基础价时回落
 // 标准基础价，不算孤儿。
 func TestParsePricingData_WarnsOrphanCacheTierFields(t *testing.T) {
 	logSink, restore := captureStructuredLog(t)
@@ -1080,11 +1081,15 @@ func TestParsePricingData_WarnsOrphanCacheTierFields(t *testing.T) {
 	}`))
 	require.NoError(t, err)
 
-	require.Equal(t, 200000, data["gemini-orphan"].LongContextInputTokenThreshold, "孤儿 cache 字段不影响 input/output 阶梯折算")
-	require.Zero(t, data["gemini-orphan"].CacheCreationInputTokenCost)
+	// 缺基础价的 cache 分项会按 0 元计费：整条目录条目被排除（模型随即无价可循，
+	// 入口处被 CheckBillablePricing 拒绝），而不是带着 $0 的缓存价上线。
+	require.NotContains(t, data, "gemini-orphan")
+	require.NotContains(t, data, "priority-variant-orphan")
+	require.NotContains(t, data, "hourly-tier-orphan")
+	require.Contains(t, data, "gemini-complete")
 	require.InDelta(t, 1.25e-6, data["gemini-complete"].CacheCreationInputTokenCost, 1e-12)
 
-	require.True(t, logSink.ContainsMessageAtLevel("gemini-orphan(cache_creation_input_token_cost_above_200k_tokens)", "warn"))
+	require.True(t, logSink.ContainsMessage("gemini-orphan(cache_creation_input_token_cost_above_200k_tokens)"))
 	require.True(t, logSink.ContainsMessage("priority-variant-orphan(cache_creation_input_token_cost_above_272k_tokens_priority)"))
 	require.True(t, logSink.ContainsMessage("hourly-tier-orphan(cache_creation_input_token_cost_above_1hr_above_200k_tokens)"))
 	require.False(t, logSink.ContainsMessage("gemini-complete"))

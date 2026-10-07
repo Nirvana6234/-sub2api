@@ -170,15 +170,10 @@ func (*HealthRequest) Descriptor() ([]byte, []int) {
 }
 
 type HealthResponse struct {
-	state   protoimpl.MessageState `protogen:"open.v1"`
-	Healthy bool                   `protobuf:"varint,1,opt,name=healthy,proto3" json:"healthy,omitempty"`
-	Message string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
-	// status_json is an optional plugin-defined JSON blob describing current runtime
-	// state (e.g. a status summary for the config UI). It MUST be produced passively
-	// — reading it must not apply config, reach upstream, or cause side effects — so
-	// the host can expose it via a lightweight, ungated status endpoint. Ignored by
-	// the host's health gating.
-	StatusJson    string `protobuf:"bytes,3,opt,name=status_json,json=statusJson,proto3" json:"status_json,omitempty"`
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Healthy       bool                   `protobuf:"varint,1,opt,name=healthy,proto3" json:"healthy,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	StatusJson    string                 `protobuf:"bytes,3,opt,name=status_json,json=statusJson,proto3" json:"status_json,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -479,13 +474,11 @@ func (x *TestConfigRequest) GetConfigJson() []byte {
 }
 
 type TestConfigResponse struct {
-	state     protoimpl.MessageState `protogen:"open.v1"`
-	Success   bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
-	Message   string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
-	LatencyMs int64                  `protobuf:"varint,3,opt,name=latency_ms,json=latencyMs,proto3" json:"latency_ms,omitempty"`
-	// status_json is an optional plugin-defined JSON blob surfaced to the config UI
-	// alongside the test result (e.g. a runtime status summary). Ignored by the host.
-	StatusJson    string `protobuf:"bytes,4,opt,name=status_json,json=statusJson,proto3" json:"status_json,omitempty"`
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	LatencyMs     int64                  `protobuf:"varint,3,opt,name=latency_ms,json=latencyMs,proto3" json:"latency_ms,omitempty"`
+	StatusJson    string                 `protobuf:"bytes,4,opt,name=status_json,json=statusJson,proto3" json:"status_json,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1141,11 +1134,9 @@ func (*ForwardResponse_End) isForwardResponse_Frame() {}
 func (*ForwardResponse_Error) isForwardResponse_Frame() {}
 
 type InitHostServicesRequest struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// host_service_id is the broker stream id the plugin dials to reach HostService.
-	HostServiceId uint32 `protobuf:"varint,1,opt,name=host_service_id,json=hostServiceId,proto3" json:"host_service_id,omitempty"`
-	// host_service_api_version lets the plugin reject a host it cannot talk to.
-	HostServiceApiVersion uint32 `protobuf:"varint,2,opt,name=host_service_api_version,json=hostServiceApiVersion,proto3" json:"host_service_api_version,omitempty"`
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	HostServiceId         uint32                 `protobuf:"varint,1,opt,name=host_service_id,json=hostServiceId,proto3" json:"host_service_id,omitempty"`
+	HostServiceApiVersion uint32                 `protobuf:"varint,2,opt,name=host_service_api_version,json=hostServiceApiVersion,proto3" json:"host_service_api_version,omitempty"`
 	unknownFields         protoimpl.UnknownFields
 	sizeCache             protoimpl.SizeCache
 }
@@ -1195,10 +1186,9 @@ func (x *InitHostServicesRequest) GetHostServiceApiVersion() uint32 {
 }
 
 type InitHostServicesResponse struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// ready is true once the plugin has successfully dialed back the host service.
-	Ready         bool   `protobuf:"varint,1,opt,name=ready,proto3" json:"ready,omitempty"`
-	Message       string `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ready         bool                   `protobuf:"varint,1,opt,name=ready,proto3" json:"ready,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1247,9 +1237,6 @@ func (x *InitHostServicesResponse) GetMessage() string {
 	return ""
 }
 
-// KV messages back a namespaced, per-plugin persistent key-value store. The
-// host derives the owning plugin from the runtime that serves the connection,
-// so a plugin can never read or write another plugin's namespace.
 type KVGetRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Namespace     string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
@@ -1355,12 +1342,11 @@ func (x *KVGetResponse) GetValue() []byte {
 }
 
 type KVSetRequest struct {
-	state     protoimpl.MessageState `protogen:"open.v1"`
-	Namespace string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
-	Key       string                 `protobuf:"bytes,2,opt,name=key,proto3" json:"key,omitempty"`
-	Value     []byte                 `protobuf:"bytes,3,opt,name=value,proto3" json:"value,omitempty"`
-	// ttl_seconds > 0 sets an expiry; 0 stores the entry without expiry.
-	TtlSeconds    int64 `protobuf:"varint,4,opt,name=ttl_seconds,json=ttlSeconds,proto3" json:"ttl_seconds,omitempty"`
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Namespace     string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	Key           string                 `protobuf:"bytes,2,opt,name=key,proto3" json:"key,omitempty"`
+	Value         []byte                 `protobuf:"bytes,3,opt,name=value,proto3" json:"value,omitempty"`
+	TtlSeconds    int64                  `protobuf:"varint,4,opt,name=ttl_seconds,json=ttlSeconds,proto3" json:"ttl_seconds,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1706,6 +1692,7 @@ func (x *ListAccountsRequest) GetAccountType() string {
 type ListAccountsResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	AccountIds    []int64                `protobuf:"varint,1,rep,packed,name=account_ids,json=accountIds,proto3" json:"account_ids,omitempty"`
+	Accounts      []*AccountInfo         `protobuf:"bytes,2,rep,name=accounts,proto3" json:"accounts,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1747,6 +1734,113 @@ func (x *ListAccountsResponse) GetAccountIds() []int64 {
 	return nil
 }
 
+func (x *ListAccountsResponse) GetAccounts() []*AccountInfo {
+	if x != nil {
+		return x.Accounts
+	}
+	return nil
+}
+
+type AccountInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	Platform      string                 `protobuf:"bytes,2,opt,name=platform,proto3" json:"platform,omitempty"`
+	AccountType   string                 `protobuf:"bytes,3,opt,name=account_type,json=accountType,proto3" json:"account_type,omitempty"`
+	Name          string                 `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
+	Status        string                 `protobuf:"bytes,5,opt,name=status,proto3" json:"status,omitempty"`
+	Schedulable   bool                   `protobuf:"varint,6,opt,name=schedulable,proto3" json:"schedulable,omitempty"`
+	IsShadow      bool                   `protobuf:"varint,7,opt,name=is_shadow,json=isShadow,proto3" json:"is_shadow,omitempty"`
+	MetadataJson  []byte                 `protobuf:"bytes,20,opt,name=metadata_json,json=metadataJson,proto3" json:"metadata_json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AccountInfo) Reset() {
+	*x = AccountInfo{}
+	mi := &file_plugin_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AccountInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AccountInfo) ProtoMessage() {}
+
+func (x *AccountInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_plugin_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AccountInfo.ProtoReflect.Descriptor instead.
+func (*AccountInfo) Descriptor() ([]byte, []int) {
+	return file_plugin_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *AccountInfo) GetId() int64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+func (x *AccountInfo) GetPlatform() string {
+	if x != nil {
+		return x.Platform
+	}
+	return ""
+}
+
+func (x *AccountInfo) GetAccountType() string {
+	if x != nil {
+		return x.AccountType
+	}
+	return ""
+}
+
+func (x *AccountInfo) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *AccountInfo) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *AccountInfo) GetSchedulable() bool {
+	if x != nil {
+		return x.Schedulable
+	}
+	return false
+}
+
+func (x *AccountInfo) GetIsShadow() bool {
+	if x != nil {
+		return x.IsShadow
+	}
+	return false
+}
+
+func (x *AccountInfo) GetMetadataJson() []byte {
+	if x != nil {
+		return x.MetadataJson
+	}
+	return nil
+}
+
 type ResolveOutboundIdentityRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	AccountId     int64                  `protobuf:"varint,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
@@ -1756,7 +1850,7 @@ type ResolveOutboundIdentityRequest struct {
 
 func (x *ResolveOutboundIdentityRequest) Reset() {
 	*x = ResolveOutboundIdentityRequest{}
-	mi := &file_plugin_proto_msgTypes[29]
+	mi := &file_plugin_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1768,7 +1862,7 @@ func (x *ResolveOutboundIdentityRequest) String() string {
 func (*ResolveOutboundIdentityRequest) ProtoMessage() {}
 
 func (x *ResolveOutboundIdentityRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[29]
+	mi := &file_plugin_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1781,7 +1875,7 @@ func (x *ResolveOutboundIdentityRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResolveOutboundIdentityRequest.ProtoReflect.Descriptor instead.
 func (*ResolveOutboundIdentityRequest) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{29}
+	return file_plugin_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *ResolveOutboundIdentityRequest) GetAccountId() int64 {
@@ -1806,7 +1900,7 @@ type ResolveOutboundIdentityResponse struct {
 
 func (x *ResolveOutboundIdentityResponse) Reset() {
 	*x = ResolveOutboundIdentityResponse{}
-	mi := &file_plugin_proto_msgTypes[30]
+	mi := &file_plugin_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1818,7 +1912,7 @@ func (x *ResolveOutboundIdentityResponse) String() string {
 func (*ResolveOutboundIdentityResponse) ProtoMessage() {}
 
 func (x *ResolveOutboundIdentityResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[30]
+	mi := &file_plugin_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1831,7 +1925,7 @@ func (x *ResolveOutboundIdentityResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResolveOutboundIdentityResponse.ProtoReflect.Descriptor instead.
 func (*ResolveOutboundIdentityResponse) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{30}
+	return file_plugin_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *ResolveOutboundIdentityResponse) GetFound() bool {
@@ -1891,7 +1985,7 @@ type ListResourcesRequest struct {
 
 func (x *ListResourcesRequest) Reset() {
 	*x = ListResourcesRequest{}
-	mi := &file_plugin_proto_msgTypes[31]
+	mi := &file_plugin_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1903,7 +1997,7 @@ func (x *ListResourcesRequest) String() string {
 func (*ListResourcesRequest) ProtoMessage() {}
 
 func (x *ListResourcesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[31]
+	mi := &file_plugin_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1916,7 +2010,7 @@ func (x *ListResourcesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListResourcesRequest.ProtoReflect.Descriptor instead.
 func (*ListResourcesRequest) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{31}
+	return file_plugin_proto_rawDescGZIP(), []int{32}
 }
 
 type AccountSummary struct {
@@ -1929,7 +2023,7 @@ type AccountSummary struct {
 
 func (x *AccountSummary) Reset() {
 	*x = AccountSummary{}
-	mi := &file_plugin_proto_msgTypes[32]
+	mi := &file_plugin_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1941,7 +2035,7 @@ func (x *AccountSummary) String() string {
 func (*AccountSummary) ProtoMessage() {}
 
 func (x *AccountSummary) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[32]
+	mi := &file_plugin_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1954,7 +2048,7 @@ func (x *AccountSummary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AccountSummary.ProtoReflect.Descriptor instead.
 func (*AccountSummary) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{32}
+	return file_plugin_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *AccountSummary) GetId() int64 {
@@ -1984,7 +2078,7 @@ type ProxySummary struct {
 
 func (x *ProxySummary) Reset() {
 	*x = ProxySummary{}
-	mi := &file_plugin_proto_msgTypes[33]
+	mi := &file_plugin_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1996,7 +2090,7 @@ func (x *ProxySummary) String() string {
 func (*ProxySummary) ProtoMessage() {}
 
 func (x *ProxySummary) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[33]
+	mi := &file_plugin_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2009,7 +2103,7 @@ func (x *ProxySummary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProxySummary.ProtoReflect.Descriptor instead.
 func (*ProxySummary) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{33}
+	return file_plugin_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *ProxySummary) GetId() int64 {
@@ -2057,7 +2151,7 @@ type ListResourcesResponse struct {
 
 func (x *ListResourcesResponse) Reset() {
 	*x = ListResourcesResponse{}
-	mi := &file_plugin_proto_msgTypes[34]
+	mi := &file_plugin_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2069,7 +2163,7 @@ func (x *ListResourcesResponse) String() string {
 func (*ListResourcesResponse) ProtoMessage() {}
 
 func (x *ListResourcesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[34]
+	mi := &file_plugin_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2082,7 +2176,7 @@ func (x *ListResourcesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListResourcesResponse.ProtoReflect.Descriptor instead.
 func (*ListResourcesResponse) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{34}
+	return file_plugin_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *ListResourcesResponse) GetAccounts() []*AccountSummary {
@@ -2108,7 +2202,7 @@ type ResolveProxyRequest struct {
 
 func (x *ResolveProxyRequest) Reset() {
 	*x = ResolveProxyRequest{}
-	mi := &file_plugin_proto_msgTypes[35]
+	mi := &file_plugin_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2120,7 +2214,7 @@ func (x *ResolveProxyRequest) String() string {
 func (*ResolveProxyRequest) ProtoMessage() {}
 
 func (x *ResolveProxyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[35]
+	mi := &file_plugin_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2133,7 +2227,7 @@ func (x *ResolveProxyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResolveProxyRequest.ProtoReflect.Descriptor instead.
 func (*ResolveProxyRequest) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{35}
+	return file_plugin_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *ResolveProxyRequest) GetProxyId() int64 {
@@ -2153,7 +2247,7 @@ type ResolveProxyResponse struct {
 
 func (x *ResolveProxyResponse) Reset() {
 	*x = ResolveProxyResponse{}
-	mi := &file_plugin_proto_msgTypes[36]
+	mi := &file_plugin_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2165,7 +2259,7 @@ func (x *ResolveProxyResponse) String() string {
 func (*ResolveProxyResponse) ProtoMessage() {}
 
 func (x *ResolveProxyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[36]
+	mi := &file_plugin_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2178,7 +2272,7 @@ func (x *ResolveProxyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResolveProxyResponse.ProtoReflect.Descriptor instead.
 func (*ResolveProxyResponse) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{36}
+	return file_plugin_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *ResolveProxyResponse) GetFound() bool {
@@ -2322,10 +2416,20 @@ const file_plugin_proto_rawDesc = "" +
 	"\x04keys\x18\x01 \x03(\tR\x04keys\"T\n" +
 	"\x13ListAccountsRequest\x12\x1a\n" +
 	"\bplatform\x18\x01 \x01(\tR\bplatform\x12!\n" +
-	"\faccount_type\x18\x02 \x01(\tR\vaccountType\"7\n" +
+	"\faccount_type\x18\x02 \x01(\tR\vaccountType\"s\n" +
 	"\x14ListAccountsResponse\x12\x1f\n" +
 	"\vaccount_ids\x18\x01 \x03(\x03R\n" +
-	"accountIds\"?\n" +
+	"accountIds\x12:\n" +
+	"\baccounts\x18\x02 \x03(\v2\x1e.sub2api.plugin.v1.AccountInfoR\baccounts\"\xec\x01\n" +
+	"\vAccountInfo\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x1a\n" +
+	"\bplatform\x18\x02 \x01(\tR\bplatform\x12!\n" +
+	"\faccount_type\x18\x03 \x01(\tR\vaccountType\x12\x12\n" +
+	"\x04name\x18\x04 \x01(\tR\x04name\x12\x16\n" +
+	"\x06status\x18\x05 \x01(\tR\x06status\x12 \n" +
+	"\vschedulable\x18\x06 \x01(\bR\vschedulable\x12\x1b\n" +
+	"\tis_shadow\x18\a \x01(\bR\bisShadow\x12#\n" +
+	"\rmetadata_json\x18\x14 \x01(\fR\fmetadataJson\"?\n" +
 	"\x1eResolveOutboundIdentityRequest\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\x03R\taccountId\"\x80\x03\n" +
@@ -2390,7 +2494,7 @@ func file_plugin_proto_rawDescGZIP() []byte {
 	return file_plugin_proto_rawDescData
 }
 
-var file_plugin_proto_msgTypes = make([]protoimpl.MessageInfo, 40)
+var file_plugin_proto_msgTypes = make([]protoimpl.MessageInfo, 41)
 var file_plugin_proto_goTypes = []any{
 	(*GetInfoRequest)(nil),                  // 0: sub2api.plugin.v1.GetInfoRequest
 	(*GetInfoResponse)(nil),                 // 1: sub2api.plugin.v1.GetInfoResponse
@@ -2421,66 +2525,68 @@ var file_plugin_proto_goTypes = []any{
 	(*KVListResponse)(nil),                  // 26: sub2api.plugin.v1.KVListResponse
 	(*ListAccountsRequest)(nil),             // 27: sub2api.plugin.v1.ListAccountsRequest
 	(*ListAccountsResponse)(nil),            // 28: sub2api.plugin.v1.ListAccountsResponse
-	(*ResolveOutboundIdentityRequest)(nil),  // 29: sub2api.plugin.v1.ResolveOutboundIdentityRequest
-	(*ResolveOutboundIdentityResponse)(nil), // 30: sub2api.plugin.v1.ResolveOutboundIdentityResponse
-	(*ListResourcesRequest)(nil),            // 31: sub2api.plugin.v1.ListResourcesRequest
-	(*AccountSummary)(nil),                  // 32: sub2api.plugin.v1.AccountSummary
-	(*ProxySummary)(nil),                    // 33: sub2api.plugin.v1.ProxySummary
-	(*ListResourcesResponse)(nil),           // 34: sub2api.plugin.v1.ListResourcesResponse
-	(*ResolveProxyRequest)(nil),             // 35: sub2api.plugin.v1.ResolveProxyRequest
-	(*ResolveProxyResponse)(nil),            // 36: sub2api.plugin.v1.ResolveProxyResponse
-	nil,                                     // 37: sub2api.plugin.v1.ForwardRequestStart.HeadersEntry
-	nil,                                     // 38: sub2api.plugin.v1.ForwardResponseStart.HeadersEntry
-	nil,                                     // 39: sub2api.plugin.v1.ResolveOutboundIdentityResponse.HeadersEntry
+	(*AccountInfo)(nil),                     // 29: sub2api.plugin.v1.AccountInfo
+	(*ResolveOutboundIdentityRequest)(nil),  // 30: sub2api.plugin.v1.ResolveOutboundIdentityRequest
+	(*ResolveOutboundIdentityResponse)(nil), // 31: sub2api.plugin.v1.ResolveOutboundIdentityResponse
+	(*ListResourcesRequest)(nil),            // 32: sub2api.plugin.v1.ListResourcesRequest
+	(*AccountSummary)(nil),                  // 33: sub2api.plugin.v1.AccountSummary
+	(*ProxySummary)(nil),                    // 34: sub2api.plugin.v1.ProxySummary
+	(*ListResourcesResponse)(nil),           // 35: sub2api.plugin.v1.ListResourcesResponse
+	(*ResolveProxyRequest)(nil),             // 36: sub2api.plugin.v1.ResolveProxyRequest
+	(*ResolveProxyResponse)(nil),            // 37: sub2api.plugin.v1.ResolveProxyResponse
+	nil,                                     // 38: sub2api.plugin.v1.ForwardRequestStart.HeadersEntry
+	nil,                                     // 39: sub2api.plugin.v1.ForwardResponseStart.HeadersEntry
+	nil,                                     // 40: sub2api.plugin.v1.ResolveOutboundIdentityResponse.HeadersEntry
 }
 var file_plugin_proto_depIdxs = []int32{
-	37, // 0: sub2api.plugin.v1.ForwardRequestStart.headers:type_name -> sub2api.plugin.v1.ForwardRequestStart.HeadersEntry
+	38, // 0: sub2api.plugin.v1.ForwardRequestStart.headers:type_name -> sub2api.plugin.v1.ForwardRequestStart.HeadersEntry
 	11, // 1: sub2api.plugin.v1.ForwardRequest.start:type_name -> sub2api.plugin.v1.ForwardRequestStart
-	38, // 2: sub2api.plugin.v1.ForwardResponseStart.headers:type_name -> sub2api.plugin.v1.ForwardResponseStart.HeadersEntry
+	39, // 2: sub2api.plugin.v1.ForwardResponseStart.headers:type_name -> sub2api.plugin.v1.ForwardResponseStart.HeadersEntry
 	13, // 3: sub2api.plugin.v1.ForwardResponse.start:type_name -> sub2api.plugin.v1.ForwardResponseStart
 	14, // 4: sub2api.plugin.v1.ForwardResponse.end:type_name -> sub2api.plugin.v1.ForwardResponseEnd
 	15, // 5: sub2api.plugin.v1.ForwardResponse.error:type_name -> sub2api.plugin.v1.ForwardResponseError
-	39, // 6: sub2api.plugin.v1.ResolveOutboundIdentityResponse.headers:type_name -> sub2api.plugin.v1.ResolveOutboundIdentityResponse.HeadersEntry
-	32, // 7: sub2api.plugin.v1.ListResourcesResponse.accounts:type_name -> sub2api.plugin.v1.AccountSummary
-	33, // 8: sub2api.plugin.v1.ListResourcesResponse.proxies:type_name -> sub2api.plugin.v1.ProxySummary
-	10, // 9: sub2api.plugin.v1.ForwardRequestStart.HeadersEntry.value:type_name -> sub2api.plugin.v1.HeaderValues
-	10, // 10: sub2api.plugin.v1.ForwardResponseStart.HeadersEntry.value:type_name -> sub2api.plugin.v1.HeaderValues
-	10, // 11: sub2api.plugin.v1.ResolveOutboundIdentityResponse.HeadersEntry.value:type_name -> sub2api.plugin.v1.HeaderValues
-	0,  // 12: sub2api.plugin.v1.TransportPlugin.GetInfo:input_type -> sub2api.plugin.v1.GetInfoRequest
-	2,  // 13: sub2api.plugin.v1.TransportPlugin.Health:input_type -> sub2api.plugin.v1.HealthRequest
-	4,  // 14: sub2api.plugin.v1.TransportPlugin.ValidateConfig:input_type -> sub2api.plugin.v1.ValidateConfigRequest
-	6,  // 15: sub2api.plugin.v1.TransportPlugin.ApplyConfig:input_type -> sub2api.plugin.v1.ApplyConfigRequest
-	8,  // 16: sub2api.plugin.v1.TransportPlugin.TestConfig:input_type -> sub2api.plugin.v1.TestConfigRequest
-	12, // 17: sub2api.plugin.v1.TransportPlugin.Forward:input_type -> sub2api.plugin.v1.ForwardRequest
-	17, // 18: sub2api.plugin.v1.TransportPlugin.InitHostServices:input_type -> sub2api.plugin.v1.InitHostServicesRequest
-	19, // 19: sub2api.plugin.v1.HostService.KVGet:input_type -> sub2api.plugin.v1.KVGetRequest
-	21, // 20: sub2api.plugin.v1.HostService.KVSet:input_type -> sub2api.plugin.v1.KVSetRequest
-	23, // 21: sub2api.plugin.v1.HostService.KVDelete:input_type -> sub2api.plugin.v1.KVDeleteRequest
-	25, // 22: sub2api.plugin.v1.HostService.KVList:input_type -> sub2api.plugin.v1.KVListRequest
-	31, // 23: sub2api.plugin.v1.HostService.ListResources:input_type -> sub2api.plugin.v1.ListResourcesRequest
-	35, // 24: sub2api.plugin.v1.HostService.ResolveProxy:input_type -> sub2api.plugin.v1.ResolveProxyRequest
-	27, // 25: sub2api.plugin.v1.HostService.ListAccounts:input_type -> sub2api.plugin.v1.ListAccountsRequest
-	29, // 26: sub2api.plugin.v1.HostService.ResolveOutboundIdentity:input_type -> sub2api.plugin.v1.ResolveOutboundIdentityRequest
-	1,  // 27: sub2api.plugin.v1.TransportPlugin.GetInfo:output_type -> sub2api.plugin.v1.GetInfoResponse
-	3,  // 28: sub2api.plugin.v1.TransportPlugin.Health:output_type -> sub2api.plugin.v1.HealthResponse
-	5,  // 29: sub2api.plugin.v1.TransportPlugin.ValidateConfig:output_type -> sub2api.plugin.v1.ValidateConfigResponse
-	7,  // 30: sub2api.plugin.v1.TransportPlugin.ApplyConfig:output_type -> sub2api.plugin.v1.ApplyConfigResponse
-	9,  // 31: sub2api.plugin.v1.TransportPlugin.TestConfig:output_type -> sub2api.plugin.v1.TestConfigResponse
-	16, // 32: sub2api.plugin.v1.TransportPlugin.Forward:output_type -> sub2api.plugin.v1.ForwardResponse
-	18, // 33: sub2api.plugin.v1.TransportPlugin.InitHostServices:output_type -> sub2api.plugin.v1.InitHostServicesResponse
-	20, // 34: sub2api.plugin.v1.HostService.KVGet:output_type -> sub2api.plugin.v1.KVGetResponse
-	22, // 35: sub2api.plugin.v1.HostService.KVSet:output_type -> sub2api.plugin.v1.KVSetResponse
-	24, // 36: sub2api.plugin.v1.HostService.KVDelete:output_type -> sub2api.plugin.v1.KVDeleteResponse
-	26, // 37: sub2api.plugin.v1.HostService.KVList:output_type -> sub2api.plugin.v1.KVListResponse
-	34, // 38: sub2api.plugin.v1.HostService.ListResources:output_type -> sub2api.plugin.v1.ListResourcesResponse
-	36, // 39: sub2api.plugin.v1.HostService.ResolveProxy:output_type -> sub2api.plugin.v1.ResolveProxyResponse
-	28, // 40: sub2api.plugin.v1.HostService.ListAccounts:output_type -> sub2api.plugin.v1.ListAccountsResponse
-	30, // 41: sub2api.plugin.v1.HostService.ResolveOutboundIdentity:output_type -> sub2api.plugin.v1.ResolveOutboundIdentityResponse
-	27, // [27:42] is the sub-list for method output_type
-	12, // [12:27] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	29, // 6: sub2api.plugin.v1.ListAccountsResponse.accounts:type_name -> sub2api.plugin.v1.AccountInfo
+	40, // 7: sub2api.plugin.v1.ResolveOutboundIdentityResponse.headers:type_name -> sub2api.plugin.v1.ResolveOutboundIdentityResponse.HeadersEntry
+	33, // 8: sub2api.plugin.v1.ListResourcesResponse.accounts:type_name -> sub2api.plugin.v1.AccountSummary
+	34, // 9: sub2api.plugin.v1.ListResourcesResponse.proxies:type_name -> sub2api.plugin.v1.ProxySummary
+	10, // 10: sub2api.plugin.v1.ForwardRequestStart.HeadersEntry.value:type_name -> sub2api.plugin.v1.HeaderValues
+	10, // 11: sub2api.plugin.v1.ForwardResponseStart.HeadersEntry.value:type_name -> sub2api.plugin.v1.HeaderValues
+	10, // 12: sub2api.plugin.v1.ResolveOutboundIdentityResponse.HeadersEntry.value:type_name -> sub2api.plugin.v1.HeaderValues
+	0,  // 13: sub2api.plugin.v1.TransportPlugin.GetInfo:input_type -> sub2api.plugin.v1.GetInfoRequest
+	2,  // 14: sub2api.plugin.v1.TransportPlugin.Health:input_type -> sub2api.plugin.v1.HealthRequest
+	4,  // 15: sub2api.plugin.v1.TransportPlugin.ValidateConfig:input_type -> sub2api.plugin.v1.ValidateConfigRequest
+	6,  // 16: sub2api.plugin.v1.TransportPlugin.ApplyConfig:input_type -> sub2api.plugin.v1.ApplyConfigRequest
+	8,  // 17: sub2api.plugin.v1.TransportPlugin.TestConfig:input_type -> sub2api.plugin.v1.TestConfigRequest
+	12, // 18: sub2api.plugin.v1.TransportPlugin.Forward:input_type -> sub2api.plugin.v1.ForwardRequest
+	17, // 19: sub2api.plugin.v1.TransportPlugin.InitHostServices:input_type -> sub2api.plugin.v1.InitHostServicesRequest
+	19, // 20: sub2api.plugin.v1.HostService.KVGet:input_type -> sub2api.plugin.v1.KVGetRequest
+	21, // 21: sub2api.plugin.v1.HostService.KVSet:input_type -> sub2api.plugin.v1.KVSetRequest
+	23, // 22: sub2api.plugin.v1.HostService.KVDelete:input_type -> sub2api.plugin.v1.KVDeleteRequest
+	25, // 23: sub2api.plugin.v1.HostService.KVList:input_type -> sub2api.plugin.v1.KVListRequest
+	32, // 24: sub2api.plugin.v1.HostService.ListResources:input_type -> sub2api.plugin.v1.ListResourcesRequest
+	36, // 25: sub2api.plugin.v1.HostService.ResolveProxy:input_type -> sub2api.plugin.v1.ResolveProxyRequest
+	27, // 26: sub2api.plugin.v1.HostService.ListAccounts:input_type -> sub2api.plugin.v1.ListAccountsRequest
+	30, // 27: sub2api.plugin.v1.HostService.ResolveOutboundIdentity:input_type -> sub2api.plugin.v1.ResolveOutboundIdentityRequest
+	1,  // 28: sub2api.plugin.v1.TransportPlugin.GetInfo:output_type -> sub2api.plugin.v1.GetInfoResponse
+	3,  // 29: sub2api.plugin.v1.TransportPlugin.Health:output_type -> sub2api.plugin.v1.HealthResponse
+	5,  // 30: sub2api.plugin.v1.TransportPlugin.ValidateConfig:output_type -> sub2api.plugin.v1.ValidateConfigResponse
+	7,  // 31: sub2api.plugin.v1.TransportPlugin.ApplyConfig:output_type -> sub2api.plugin.v1.ApplyConfigResponse
+	9,  // 32: sub2api.plugin.v1.TransportPlugin.TestConfig:output_type -> sub2api.plugin.v1.TestConfigResponse
+	16, // 33: sub2api.plugin.v1.TransportPlugin.Forward:output_type -> sub2api.plugin.v1.ForwardResponse
+	18, // 34: sub2api.plugin.v1.TransportPlugin.InitHostServices:output_type -> sub2api.plugin.v1.InitHostServicesResponse
+	20, // 35: sub2api.plugin.v1.HostService.KVGet:output_type -> sub2api.plugin.v1.KVGetResponse
+	22, // 36: sub2api.plugin.v1.HostService.KVSet:output_type -> sub2api.plugin.v1.KVSetResponse
+	24, // 37: sub2api.plugin.v1.HostService.KVDelete:output_type -> sub2api.plugin.v1.KVDeleteResponse
+	26, // 38: sub2api.plugin.v1.HostService.KVList:output_type -> sub2api.plugin.v1.KVListResponse
+	35, // 39: sub2api.plugin.v1.HostService.ListResources:output_type -> sub2api.plugin.v1.ListResourcesResponse
+	37, // 40: sub2api.plugin.v1.HostService.ResolveProxy:output_type -> sub2api.plugin.v1.ResolveProxyResponse
+	28, // 41: sub2api.plugin.v1.HostService.ListAccounts:output_type -> sub2api.plugin.v1.ListAccountsResponse
+	31, // 42: sub2api.plugin.v1.HostService.ResolveOutboundIdentity:output_type -> sub2api.plugin.v1.ResolveOutboundIdentityResponse
+	28, // [28:43] is the sub-list for method output_type
+	13, // [13:28] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_plugin_proto_init() }
@@ -2505,7 +2611,7 @@ func file_plugin_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_plugin_proto_rawDesc), len(file_plugin_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   40,
+			NumMessages:   41,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

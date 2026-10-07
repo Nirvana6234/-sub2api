@@ -13,6 +13,11 @@ import type {
 } from '@/types/payment'
 import type { BasePaginationResponse } from '@/types'
 
+export interface BalanceExpiryConfig {
+  enabled: boolean
+  days: number
+}
+
 /** Admin-facing payment config returned by GET /admin/payment/config */
 export interface AdminPaymentConfig {
   enabled: boolean
@@ -67,6 +72,16 @@ export const adminPaymentAPI = {
   /** Get payment configuration (admin view) */
   getConfig() {
     return apiClient.get<AdminPaymentConfig>('/admin/payment/config')
+  },
+
+  /** 充值余额有效期：开关与天数 */
+  getBalanceExpiryConfig() {
+    return apiClient.get<BalanceExpiryConfig>('/admin/payment/balance-expiry')
+  },
+
+  /** 保存充值余额有效期；天数只影响之后的充值 */
+  updateBalanceExpiryConfig(data: BalanceExpiryConfig) {
+    return apiClient.put<BalanceExpiryConfig>('/admin/payment/balance-expiry', data)
   },
 
   /** Update payment configuration */

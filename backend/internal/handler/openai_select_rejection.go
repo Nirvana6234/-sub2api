@@ -131,6 +131,16 @@ func OpenAIBillingRejection(err error) OpenAIGatewayRejection {
 	return OpenAIGatewayRejection{Status: status, ErrType: code, Message: message, RetryAfter: retryAfter}
 }
 
+// PricingUnavailableRejection：模型没有可用价格时入口的拒绝（service.CheckBillablePricing，价格缺失扣费只会记 0 元）。
+// anthropic 按 Anthropic Messages 的格式写；compatResponses 是 Anthropic 分组的 /v1/responses（它把这个错误写成 code）。
+func PricingUnavailableRejection(anthropic, compat, compatResponses bool) OpenAIGatewayRejection {
+	r := OpenAIGatewayRejection{Status: http.StatusServiceUnavailable, ErrType: "api_error", Message: pricingUnavailableMessage, Anthropic: anthropic, Compat: compat}
+	if compatResponses {
+		r.ErrType = "pricing_unavailable"
+	}
+	return r
+}
+
 // OpenAICyberSessionBlockedRejection：会话被 cyber 策略屏蔽的错误（Responses / Chat 的格式）。
 func OpenAICyberSessionBlockedRejection() OpenAIGatewayRejection {
 	return OpenAIGatewayRejection{Status: http.StatusForbidden, ErrType: "permission_error", Code: "session_blocked_by_cyber_policy", Message: cyberSessionBlockedClientMsg}

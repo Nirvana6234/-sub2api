@@ -8,6 +8,7 @@ import { extractErrorMessage, extractStreamDelta, parseSSEChunk, parseSSEData } 
 
 export const GUEST_TRIAL_DEVICE_HEADER = 'X-Guest-Trial-Device'
 const DEVICE_STORAGE_KEY = 'guest_trial_device'
+const HISTORY_STORAGE_KEY = 'guest_trial_history'
 
 export interface GuestTrialState {
   enabled: boolean
@@ -149,4 +150,67 @@ export function trimGuestTrialHistory(messages: GuestTrialMessage[], maxChars: n
   // 以用户消息开头，避免上下文从一条孤立的助手回复开始
   while (kept.length > 1 && kept[0].role !== 'user') kept.shift()
   return kept
+}
+
+/** 本地保存的对话上限：条数和总字符数，避免把浏览器本地存储写满。 */
+export const GUEST_TRIAL_HISTORY_MAX_MESSAGES = 100
+export const GUEST_TRIAL_HISTORY_MAX_CHARS = 200_000
+
+interface SavedGuestTrialHistory {
+  version: 1
+  model?: string
+  messages: GuestTrialMessage[]
+}
+
+function isMessage(value: unknown): value is GuestTrialMessage {
+  if (!value || typeof value !== 'object') return false
+  const { role, content } = value as Record<string, unknown>
+  return (role === 'user' || role === 'assistant') && typeof content === 'string' && content.length > 0
+}
+
+/**
+ * 读回本浏览器保存的试用对话。对话只存在访客自己的浏览器里（localStorage），不上传服务器；
+ * 读不到、格式不对或被浏览器禁用时返回空记录，不影响聊天。
+ */
+export function loadGuestTrialHistory(): { messages: GuestTrialMessage[]; model: string } {
+  try {
+    const raw = localStorage.getItem(HISTORY_STORAGE_KEY)
+    if (!raw) return { messages: [], model: '' }
+    const saved = JSON.parse(raw) as Partial<SavedGuestTrialHistory>
+    const messages = Array.isArray(saved?.messages) ? saved.messages.filter(isMessage).map(({ role, content }) => ({ role, content })) : []
+    return { messages, model: typeof saved?.model === 'string' ? saved.model : '' }
+  } catch {
+    return { messages: [], model: '' }
+  }
+}
+
+/** 保存试用对话：只留最近的若干条，空回复（还在生成或已放弃）不保存。 */
+export function saveGuestTrialHistory(messages: GuestTrialMessage[], model: string): void {
+  const kept: GuestTrialMessage[] = []
+  let total = 0
+  for (let i = messages.length - 1; i >= 0 && kept.length < GUEST_TRIAL_HISTORY_MAX_MESSAGES; i--) {
+    const message = messages[i]
+    if (!isMessage(message)) continue
+    if (kept.length > 0 && total + message.content.length > GUEST_TRIAL_HISTORY_MAX_CHARS) break
+    kept.unshift({ role: message.role, content: message.content })
+    total += message.content.length
+  }
+  try {
+    if (kept.length === 0) {
+      localStorage.removeItem(HISTORY_STORAGE_KEY)
+      return
+    }
+    const saved: SavedGuestTrialHistory = { version: 1, model, messages: kept }
+    localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(saved))
+  } catch {
+    // 本地存储已满或被禁用：这次不保存，聊天照常进行。
+  }
+}
+
+export function clearGuestTrialHistory(): void {
+  try {
+    localStorage.removeItem(HISTORY_STORAGE_KEY)
+  } catch {
+    // 同上：本地存储不可用时没有东西可清。
+  }
 }

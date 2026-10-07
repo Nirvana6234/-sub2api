@@ -37,6 +37,9 @@ var ForwardingSettingKeys = []string{
 	service.SettingKeyOpenAICodexUserAgent,
 	service.SettingKeyOpenAICodexClientVersion,
 	service.SettingKeyOpenAICodexClientVersionSynced,
+	// 网关对 Anthropic 上游声明的 Claude Code CLI 版本（管理员覆写优先，其次自动同步值）
+	service.SettingKeyClaudeCodeClientVersion,
+	service.SettingKeyClaudeCodeClientVersionSynced,
 	service.SettingKeyAntigravityUserAgentVersion,
 	service.SettingKeyCodexCLIOnlyWhitelist,
 	service.SettingKeyCodexCLIOnlyBlacklist,
@@ -66,6 +69,8 @@ var ForwardingSettingKeys = []string{
 	service.SettingKeyGlobalBlacklist,
 	service.SettingKeyCyberSessionBlockEnabled,
 	service.SettingKeyCyberSessionBlockTTLSeconds,
+	// cyber 白名单用户：命中只记录、不屏蔽会话（从节点的 WebSocket 连接内屏蔽按它判断）
+	service.SettingKeyCyberPolicyUserAllowlist,
 	// 风控中心开关：内容审核在从节点本地判定（设计 3.4；审核配置本身在加密下发的部分）
 	service.SettingKeyRiskControlEnabled,
 }

@@ -123,6 +123,11 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	var channelMapping service.ChannelMappingResult
 	if h.relay == nil {
 		channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
+		if err := h.gatewayService.CheckBillablePricing(c.Request.Context(), apiKey, reqModel, channelMapping.MappedModel); err != nil {
+			reqLog.Warn("gateway.pricing_unavailable", zap.String("model", reqModel), zap.Error(err))
+			h.errorResponse(c, http.StatusServiceUnavailable, "api_error", pricingUnavailableMessage)
+			return
+		}
 	}
 	forwardModel := openAIChannelForwardModel(channelMapping, reqModel)
 
@@ -156,6 +161,19 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			return
 		}
 	}
+
+	// 余额模式在途预留：防止并发请求在预检时看到同一份余额而集体透支。
+	inflightRelease, err := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, tokenInflightEstimate(reqModel, body))
+	if err != nil {
+		reqLog.Info("openai_chat_completions.inflight_reservation_rejected", zap.Error(err))
+		status, code, message, retryAfter := billingErrorDetails(err)
+		if retryAfter > 0 {
+			c.Header("Retry-After", strconv.Itoa(retryAfter))
+		}
+		h.handleStreamingAwareError(c, status, code, message, streamStarted)
+		return
+	}
+	defer inflightRelease()
 
 	sessionHash := h.gatewayService.GenerateSessionHash(c, body)
 	promptCacheKey := h.gatewayService.ExtractSessionID(c, body)

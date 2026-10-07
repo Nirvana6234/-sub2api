@@ -1,12 +1,24 @@
 package routes
 
 import (
+	"time"
+
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/handler/admin"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
+)
+
+// publicOrderVerifyRateLimit caps anonymous legacy out_trade_no lookups per
+// client IP. The payment result page polls at most a handful of times per
+// order, so this leaves ample headroom for real users while making
+// out_trade_no enumeration impractical.
+const (
+	publicOrderVerifyRateLimit       = 20
+	publicOrderVerifyRateLimitWindow = time.Minute
 )
 
 // RegisterPaymentRoutes registers all payment-related routes:
@@ -21,6 +33,7 @@ func RegisterPaymentRoutes(
 	auditLog middleware.AuditLogMiddleware,
 	settingService *service.SettingService,
 	panelRateLimiter *middleware.PanelRateLimiter,
+	redisClient *redis.Client,
 ) {
 	// --- User-facing payment endpoints (authenticated) ---
 	authenticated := v1.Group("/payment")
@@ -48,6 +61,13 @@ func RegisterPaymentRoutes(
 			orders.GET("/refund-eligible-providers", paymentHandler.GetRefundEligibleProviders)
 		}
 	}
+
+	// 余额构成与到期时间：不挂充值黑名单，名单内用户同样要看到自己的余额什么时候过期。
+	balanceExpiry := v1.Group("/payment/balance-expiry")
+	balanceExpiry.Use(gin.HandlerFunc(jwtAuth))
+	balanceExpiry.Use(middleware.BackendModeUserGuard(settingService))
+	balanceExpiry.Use(panelRateLimiter.Global())
+	balanceExpiry.GET("", paymentHandler.GetBalanceExpiry)
 
 	// --- Public payment endpoints ---
 	// Signed resume-token recovery is intentionally anonymous: possession of the
@@ -89,6 +109,10 @@ func RegisterPaymentRoutes(
 		// Config
 		adminGroup.GET("/config", adminPaymentHandler.GetConfig)
 		adminGroup.PUT("/config", adminPaymentHandler.UpdateConfig)
+
+		// 充值余额有效期（开关 + 天数）
+		adminGroup.GET("/balance-expiry", adminPaymentHandler.GetBalanceExpiryConfig)
+		adminGroup.PUT("/balance-expiry", adminPaymentHandler.UpdateBalanceExpiryConfig)
 
 		// Orders
 		adminOrders := adminGroup.Group("/orders")

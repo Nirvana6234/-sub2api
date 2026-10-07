@@ -59,6 +59,7 @@ describe('TrialChatView', () => {
     vi.clearAllMocks()
     authStore.isAuthenticated = false
     appStore.cachedPublicSettings = {}
+    localStorage.clear()
   })
 
   it('shows a sign-up prompt when the trial is closed', async () => {
@@ -121,5 +122,90 @@ describe('TrialChatView', () => {
     await flushPromises()
     expect(api.sendGuestTrialChat).not.toHaveBeenCalled()
     expect(wrapper.get('[data-testid="trial-error"]').text()).toContain('人机验证')
+  })
+
+  describe('chat history kept in this browser', () => {
+    const saved = (messages: { role: string; content: string }[], model = '') =>
+      localStorage.setItem('guest_trial_history', JSON.stringify({ version: 1, model, messages }))
+
+    it('shows the earlier chat again after a refresh', async () => {
+      saved([{ role: 'user', content: '上次的问题' }, { role: 'assistant', content: '上次的回答' }])
+      api.fetchGuestTrialState.mockResolvedValue(enabledState)
+      const wrapper = render()
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('上次的问题')
+      expect(wrapper.text()).toContain('上次的回答')
+      expect(wrapper.text()).toContain('聊天记录只保存在本机浏览器')
+    })
+
+    it('saves each finished turn locally and sends it as context next time', async () => {
+      saved([{ role: 'user', content: '上次的问题' }, { role: 'assistant', content: '上次的回答' }])
+      api.fetchGuestTrialState.mockResolvedValue(enabledState)
+      api.sendGuestTrialChat.mockImplementation(async (_model: string, _messages: unknown, options: { onDelta?: (text: string) => void }) => {
+        options.onDelta?.('新的回答')
+        return { content: '新的回答', remaining: 19 }
+      })
+      const wrapper = render()
+      await flushPromises()
+      await wrapper.get('[data-testid="trial-input"]').setValue('新的问题')
+      await wrapper.get('form').trigger('submit')
+      await flushPromises()
+
+      expect(api.sendGuestTrialChat.mock.calls[0][1]).toEqual([
+        { role: 'user', content: '上次的问题' },
+        { role: 'assistant', content: '上次的回答' },
+        { role: 'user', content: '新的问题' },
+      ])
+      const stored = JSON.parse(localStorage.getItem('guest_trial_history') || '{}')
+      expect(stored.model).toBe('gpt-5.4-mini')
+      expect(stored.messages.map((m: { content: string }) => m.content)).toEqual(['上次的问题', '上次的回答', '新的问题', '新的回答'])
+    })
+
+    it('does not keep a question whose send failed', async () => {
+      api.fetchGuestTrialState.mockResolvedValue(enabledState)
+      api.sendGuestTrialChat.mockRejectedValue(new Error('网络错误'))
+      const wrapper = render()
+      await flushPromises()
+      await wrapper.get('[data-testid="trial-input"]').setValue('发不出去的问题')
+      await wrapper.get('form').trigger('submit')
+      await flushPromises()
+
+      expect(localStorage.getItem('guest_trial_history')).toBeNull()
+    })
+
+    it('comes back to the model used last time when it is still offered', async () => {
+      saved([{ role: 'user', content: '问' }, { role: 'assistant', content: '答' }], 'deepseek-v4.1-flash')
+      api.fetchGuestTrialState.mockResolvedValue({ ...enabledState, models: ['gpt-5.4-mini', 'deepseek-v4.1-flash'] })
+      const wrapper = render()
+      await flushPromises()
+
+      expect((wrapper.get('[data-testid="trial-model"]').element as HTMLSelectElement).value).toBe('deepseek-v4.1-flash')
+    })
+
+    it('clears the saved chat after the visitor confirms', async () => {
+      saved([{ role: 'user', content: '要清掉的问题' }, { role: 'assistant', content: '要清掉的回答' }])
+      api.fetchGuestTrialState.mockResolvedValue(enabledState)
+      const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+      const wrapper = render()
+      await flushPromises()
+
+      await wrapper.get('[data-testid="trial-clear-history"]').trigger('click')
+
+      expect(confirm).toHaveBeenCalled()
+      expect(wrapper.text()).not.toContain('要清掉的问题')
+      expect(localStorage.getItem('guest_trial_history')).toBeNull()
+      confirm.mockRestore()
+    })
+
+    it('ignores a damaged saved chat', async () => {
+      localStorage.setItem('guest_trial_history', '{not json')
+      api.fetchGuestTrialState.mockResolvedValue(enabledState)
+      const wrapper = render()
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="trial-history-bar"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="trial-input"]').exists()).toBe(true)
+    })
   })
 })

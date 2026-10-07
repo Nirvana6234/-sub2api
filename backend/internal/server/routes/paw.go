@@ -609,6 +609,8 @@ func pawResponsesHandler(primaryChat, localChat *service.PawChatService, deps Pa
 			pawChatError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid Responses payload")
 			return
 		}
+		// 先记下模型：分组校验失败时后台错误列表也要能看到用户请求的是哪个模型。
+		handler.SetOpsRequestedModel(c, payload.Model)
 
 		resolution, err := chat.PrepareResponses(c.Request.Context(), subject.UserID, service.PawResponsesRequest{
 			GroupID: groupID,

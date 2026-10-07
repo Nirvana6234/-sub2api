@@ -15,9 +15,15 @@ import (
 // 换号状态 FailoverState 在从节点的处理函数里），错误按 Google 格式写。主节点的拒绝只带状态码、文案、Retry-After
 // 和运维标记，格式由这里决定。
 
-// GeminiUserSlotRejection 是用户并发槽拿不到的错误（本地 GeminiV1BetaModels：429，文案取自错误本身）。
+// GeminiUserSlotRejection 是用户并发槽拿不到的错误（本地 GeminiV1BetaModels：googleConcurrencyError，状态码和文案按并发错误统一映射）。
 func GeminiUserSlotRejection(err error) OpenAIGatewayRejection {
-	return OpenAIGatewayRejection{Status: http.StatusTooManyRequests, Message: err.Error()}
+	status, _, _, message := concurrencyErrorResponse(err, "user")
+	return OpenAIGatewayRejection{Status: status, Message: message}
+}
+
+// GeminiPricingUnavailableRejection 是模型没有可用价格时的错误（本地 GeminiV1BetaModels：503，Google 错误格式）。
+func GeminiPricingUnavailableRejection() OpenAIGatewayRejection {
+	return OpenAIGatewayRejection{Status: http.StatusServiceUnavailable, Message: pricingUnavailableMessage}
 }
 
 // GeminiFirstSelectFailureRejection 是第一次就选不出账号的错误（本地 GeminiV1BetaModels：按模型不存在分类，否则带调度器的错误）。

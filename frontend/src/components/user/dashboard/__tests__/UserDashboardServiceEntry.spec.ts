@@ -89,4 +89,24 @@ describe('UserDashboardServiceEntry', () => {
     const wrapper = mountEntry({ playground_enabled: true, client_download_enabled: true })
     expect(wrapper.html()).not.toMatch(/recharge|purchase|充值/)
   })
+  describe('client version label', () => {
+    const base = { playground_enabled: true, client_download_enabled: true }
+
+    it('shows one version when Windows and macOS are on the same release', () => {
+      const text = mountEntry({ ...base, client_latest_version: '1.0', client_latest_version_mac: '1.0' }).text()
+      expect(text).toContain('dashboard.serviceEntry.client.meta')
+      expect(text).not.toContain('dashboard.serviceEntry.client.metaPlatforms')
+    })
+
+    it('shows both versions when macOS lags behind, so the card never promises a version a Mac cannot get', () => {
+      const text = mountEntry({ ...base, client_latest_version: '1.0', client_latest_version_mac: '0.9' }).text()
+      expect(text).toContain('dashboard.serviceEntry.client.metaPlatforms')
+    })
+
+    it('falls back to the single version when no macOS version is published', () => {
+      const text = mountEntry({ ...base, client_latest_version: '1.0', client_latest_version_mac: '' }).text()
+      expect(text).toContain('dashboard.serviceEntry.client.meta')
+      expect(text).not.toContain('dashboard.serviceEntry.client.metaPlatforms')
+    })
+  })
 })

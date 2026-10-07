@@ -351,6 +351,11 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, modelName)
+	if err := h.gatewayService.CheckBillablePricing(c.Request.Context(), apiKey, modelName, channelMapping.MappedModel); err != nil {
+		reqLog.Warn("gemini.pricing_unavailable", zap.String("model", modelName), zap.Error(err))
+		googleError(c, http.StatusServiceUnavailable, pricingUnavailableMessage)
+		return
+	}
 	reqModel := modelName // 保存映射前的原始模型名
 	if channelMapping.Mapped {
 		modelName = channelMapping.MappedModel
@@ -374,7 +379,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		userReleaseFunc, err := geminiConcurrency.AcquireUserSlotWithWait(c, authSubject.UserID, authSubject.Concurrency, stream, &streamStarted)
 		if err != nil {
 			reqLog.Warn("gemini.user_slot_acquire_failed", zap.Error(err))
-			googleError(c, http.StatusTooManyRequests, err.Error())
+			googleConcurrencyError(c, err, "user")
 			return
 		}
 		// 确保请求取消时也会释放槽位，避免长连接被动中断造成泄漏
@@ -394,6 +399,19 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 			return
 		}
 	}
+
+	// 余额模式在途预留：防止并发请求在预检时看到同一份余额而集体透支。
+	inflightRelease, err := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, tokenInflightEstimate(modelName, body))
+	if err != nil {
+		reqLog.Info("gemini.inflight_reservation_rejected", zap.Error(err))
+		status, _, message, retryAfter := billingErrorDetails(err)
+		if retryAfter > 0 {
+			c.Header("Retry-After", strconv.Itoa(retryAfter))
+		}
+		googleError(c, status, message)
+		return
+	}
+	defer inflightRelease()
 
 	// 3) select account (sticky session based on request body)
 	// 优先使用 Gemini CLI 的会话标识（privileged-user-id + tmp 目录哈希）
@@ -589,6 +607,10 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		}
 		if outcome.Kind == AnthropicSelectFailed {
 			err := outcome.Err
+			if failoverClientGone(c) {
+				reqLog.Info("gemini.account_select_aborted_client_disconnected", zap.Error(err))
+				return
+			}
 			if len(fs.FailedAccountIDs) == 0 {
 				cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, modelName, modelName, service.PlatformGemini)
 				if !cls.ModelNotFound {
@@ -625,7 +647,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 			googleError(c, http.StatusTooManyRequests, "Too many pending requests, please retry later")
 			return
 		case AnthropicSelectSlotError:
-			googleError(c, http.StatusTooManyRequests, outcome.Err.Error())
+			googleConcurrencyError(c, outcome.Err, "account")
 			return
 		case AnthropicSelectProfitVetoed:
 			reqLog.Debug("gemini.account_slot_profit_vetoed", zap.Int64("account_id", account.ID), zap.String("reason", outcome.VetoReason))
@@ -681,7 +703,8 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 					return
 				}
 			}
-			// ForwardNative already wrote the response
+			// 转发层已写出错误响应；客户端断开时转发层不写，响应未提交则标记 499。
+			failoverClientGone(c)
 			reqLog.Error("gemini.forward_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 			return
 		}
@@ -851,6 +874,13 @@ func googleError(c *gin.Context, status int, message string) {
 			"status":  googleapi.HTTPStatusToGoogleStatus(status),
 		},
 	})
+}
+
+// googleConcurrencyError 以 Google 错误格式回写并发槽获取失败，状态码与文案
+// 沿用 concurrencyErrorResponse 的统一映射（客户端断开为 499）。
+func googleConcurrencyError(c *gin.Context, err error, slotType string) {
+	status, _, _, message := concurrencyErrorResponse(err, slotType)
+	googleError(c, status, message)
 }
 
 func writeUpstreamResponse(c *gin.Context, res *service.UpstreamHTTPResult) {

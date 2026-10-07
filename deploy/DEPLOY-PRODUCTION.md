@@ -509,6 +509,66 @@ ssh -i "$PRODKEY" ec2-user@$PRODIP \
 > `/api/v1/settings/public` 立刻是新值，但 `/download` 等页面仍是旧值，直到容器重启或后台设置页再保存一次。
 > 客户端发版改下载地址/版本号时，要么在后台设置页改，要么改完数据库后重启 sub2api。
 
+### B4.3 2026-10-05 发版：Key 删除漏计费修复 + 充值有效期 + 客户端 1.0
+
+二进制 `sub2api-20261005-keydelete-billing-expiry-r1`（`local/main` `b27aad830`），上一版
+`sub2api-20260928-paw-ops-user-r2`，回滚改回它即可。SHA256：
+
+```text
+9c3126b63a172b1e2ad71285749c35184ececf75256160ab28c680a71c155c31
+```
+
+发版前备份：`/opt/sub2api/backups/pre-deploy-20261005-keydelete-billing-expiry.dump`。本次带上线的内容：
+
+- **修复漏计费**：请求在途期间删除 API Key，扣费事务不再回滚（`f7b7835db`，事故见下）。
+- 充值余额有效期（迁移 `259_balance_expiry_lots.sql`，后台「订单管理」顶部开关，**默认关闭**，见 `docs/BALANCE_EXPIRY.md`）。
+- 合入 Nirvana main：客户端 1.0 的 `client-version.json`、网关请求体哈希性能优化。
+
+验证：`sub2api=healthy`、`/health=200`、`/api/v1/tickets=401`、`/download=200`、
+`/api/v1/payment/balance-expiry` 与 `/api/v1/admin/payment/balance-expiry` 未带凭据均 401，
+迁移最新为 259，`balance_expiry_enabled=false`。
+
+> **事故（2026-10-05）**：用户 151 用脚本「建 Key（额度 100）→ 发请求 → 约 2 秒后删 Key」，请求结束异步记账时
+> Key 已软删除，Key 额度更新 SQL 带 `deleted_at IS NULL`，0 行返回 `API_KEY_NOT_FOUND`，同事务的余额扣费一并回滚，
+> 日志是 `record_usage_failed … API_KEY_NOT_FOUND`，用量日志 `actual_cost=0` 且没有 `usage_billing_dedup` 记录。
+> 修复前 7 笔共少收约 $0.025。真库回归：`internal/repository/usage_billing_deleted_key_pg_test.go`（`-tags pgtest`）。
+>
+> **遗留**：macOS 1.0 安装包尚未上传（`codex-relay-client_v1.0_macos-arm64.tar.gz` 返回 404），而
+> `client-version.json` 已是 1.0，下载页 macOS 链接仍是 0.9。
+
+**r2（同日追加）**：二进制 `sub2api-20261005-keydelete-billing-expiry-r2`（`84850924f`），SHA256
+`20bb1e3e4eba03ef6e3312c791052b88b1bdacc9974da3c5817ec5d2358920fd`，仅前端改动：用户首页「客户端」卡片在 Windows 与
+macOS 最新版本不一致时分别显示（`最新版 Windows v1.0 · macOS v0.9`），不再只显示 Windows 版本号。
+macOS 的版本由后台设置 `client_latest_version_mac` 单独控制（当前 0.9），Mac 客户端不会被提示升级到 1.0，
+待 macOS 1.0 包构建上传后再把它改到 1.0。
+
+**CPA 同日发版**：release `20261005-b49dbf6-concurrency-fdc7eec`（后端 `b49dbf6`、管理界面 `fdc7eec`），
+上一版 `20260927-a303e91-concurrency-37e6b5b`。内容：Codex 重置额度后立即清除限流冷却状态；额度页新增
+周额度自动重置开关与天数阈值（默认关闭）。`release.py candidate` 隔离验证通过后 `activate`，live verifier 通过。
+
+**r3（同日）合入官方 v0.2.13**：二进制 `sub2api-20261005-upstream-0.2.13-r1`（`63f80542f`），SHA256
+`008232e446f44124b5028b6a965562827676fd4523001fe5444ef2b5b22191cc`，上一版 `sub2api-20261005-keydelete-billing-expiry-r2`，
+发版前备份 `/opt/sub2api/backups/pre-deploy-20261005-upstream-0.2.13.dump`。
+
+- 合并 402 个官方提交，保留本地定制；**Key 删除漏计费改用官方修法**（`c2d5bbd93`，放弃本地 `f7b7835db`）。
+- 新增 5 个迁移（`238b`/`239`/`240`/`241_add_payment_order_bonus_amount`/`241_add_typesafe_platform`），均为加列/放宽约束，已在生产落库。
+- TypeSafe/Jev 两边各自实现了 `/v1/systemone`：保留本地网关与账号测试，官方的重复实现已删除。
+- 取舍：模型选择器按官方语义（只列映射内模型）；Responses 探测遇 model-not-found 不再落标。
+- 匿名 `/payment/public/orders/verify` 仍保持本地的「必须登录」，未采用官方的限流匿名方案。
+
+**r4（同日）无价拒绝 + Jev 对齐**：二进制 `sub2api-20261005-upstream-0.2.13-r2`（`1b4d8cced`），SHA256
+`2d37763c6b1b9aabc6bc76e2585531c8a5aab396f8216328dd67d8ededf3a130`，无迁移。
+
+- **兜底价格文件**：容器镜像里的 `/app/resources/model-pricing/model_prices_and_context_window.json` 是 8 月的旧快照，
+  6 个 gemini 模型缓存价缺基础价（启动告警的真正来源；线上目录 `data/model_pricing.json` 本来就有，实际计费没少收）。
+  现已把仓库里的新快照放到 `/opt/sub2api/resources/` 并在 compose 里只读挂载，告警消失。**以后更新快照要同步这份文件。**
+- **无价拒绝**：`service.CheckBillablePricing` 在文本端点入口（Messages / Chat Completions / Responses / Gemini）确认有价可收，
+  否则 503 `Pricing is not configured for this model`。放行：显式渠道/分组定价、非 token 计费、目录单价大于 0、
+  分组倍率为 0、图片/视频模型。目录里缺基础价的 cache above 档条目整条排除并打 ERROR。
+  上线前核对过：近 14 天用量没有 `total_cost=0` 的 token 请求。
+- **Jev 对齐官方**：结构校验、用户并发槽、在途预留、利润控制终检、换号状态机、composite 分组、响应校验；
+  保留本地的不审计提示词、按标价入账、4xx 原样回客户端、默认模型列表。
+
 ## B5. 回滚
 
 bind mount 模式：把 compose 里挂载的文件名改回上一个二进制，重跑 B3 最后那条命令即可。

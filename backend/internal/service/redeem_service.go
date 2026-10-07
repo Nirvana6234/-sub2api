@@ -151,6 +151,20 @@ type RedeemService struct {
 	entClient            *dbent.Client
 	authCacheInvalidator APIKeyAuthCacheInvalidator
 	affiliateService     *AffiliateService
+	balanceExpiry        *BalanceExpiryService
+}
+
+// SetBalanceExpiry 注入充值余额有效期服务；不注入时所有充值都是永久余额（旧行为）。
+func (s *RedeemService) SetBalanceExpiry(balanceExpiry *BalanceExpiryService) {
+	s.balanceExpiry = balanceExpiry
+}
+
+// BalanceExpiry 返回充值余额有效期服务，可能为 nil。
+func (s *RedeemService) BalanceExpiry() *BalanceExpiryService {
+	if s == nil {
+		return nil
+	}
+	return s.balanceExpiry
 }
 
 // NewRedeemService 创建兑换码服务实例
@@ -500,8 +514,14 @@ func (s *RedeemService) redeem(ctx context.Context, userID int64, code string, r
 			if err := s.redeemUserRepo.ApplyRedeemBalanceAdjustment(txCtx, userID, amount); err != nil {
 				return nil, fmt.Errorf("update user balance: %w", err)
 			}
-		} else if err := s.userRepo.UpdateBalance(txCtx, userID, amount); err != nil {
-			return nil, fmt.Errorf("update user balance: %w", err)
+		} else {
+			if err := s.userRepo.UpdateBalance(txCtx, userID, amount); err != nil {
+				return nil, fmt.Errorf("update user balance: %w", err)
+			}
+			// 充值余额有效期：同一事务里记下这笔余额的到期时间（开关关闭时什么都不做）。
+			if _, err := s.balanceExpiry.RecordRecharge(txCtx, userID, amount, redeemCode.Code); err != nil {
+				return nil, fmt.Errorf("record balance expiry: %w", err)
+			}
 		}
 
 	case RedeemTypeConcurrency:
@@ -705,15 +725,24 @@ func (s *RedeemService) reduceOrCancelSubscription(ctx context.Context, userID, 
 		return ErrSubscriptionNotFound
 	}
 
-	now := time.Now()
-	remaining := int(sub.ExpiresAt.Sub(now).Hours() / 24)
-	if remaining < 0 {
-		remaining = 0
+	// Redemption already owns a transaction. Lock and reread the subscription
+	// before computing changes: the redeem-code lock cannot serialize different
+	// codes (or an administrator renewal) targeting the same subscription.
+	sub, err = s.subscriptionService.userSubRepo.GetByIDForUpdate(ctx, sub.ID)
+	if err != nil {
+		return fmt.Errorf("lock subscription for reduction: %w", err)
 	}
+
+	now := time.Now()
+	if s.subscriptionService.now != nil {
+		now = s.subscriptionService.now()
+	}
+	// Preserve calendar-day semantics without rounding away the remaining hours.
+	newExpiresAt := sub.ExpiresAt.AddDate(0, 0, -reduceDays)
 
 	notes := fmt.Sprintf("通过兑换码 %s 退款扣减 %d 天", code, reduceDays)
 
-	if remaining <= reduceDays {
+	if !newExpiresAt.After(now) {
 		// 剩余天数不足，直接取消订阅
 		if err := s.subscriptionService.userSubRepo.UpdateStatus(ctx, sub.ID, SubscriptionStatusExpired); err != nil {
 			return fmt.Errorf("cancel subscription: %w", err)
@@ -724,7 +753,6 @@ func (s *RedeemService) reduceOrCancelSubscription(ctx context.Context, userID, 
 		}
 	} else {
 		// 缩短天数
-		newExpiresAt := sub.ExpiresAt.AddDate(0, 0, -reduceDays)
 		if err := s.subscriptionService.userSubRepo.ExtendExpiry(ctx, sub.ID, newExpiresAt); err != nil {
 			return fmt.Errorf("reduce subscription: %w", err)
 		}

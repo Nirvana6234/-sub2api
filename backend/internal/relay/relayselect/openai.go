@@ -186,6 +186,11 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 		return gatewayRejection(handler.OpenAIGatewayRejection{Status: http.StatusForbidden, ErrType: "permission_error", Message: service.ImageGenerationPermissionMessage()}), nil
 	}
 	channelMapping, _ := s.deps.Gateway.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, reqModel)
+	if !images && !embeddings && !alpha && !imageIntent {
+		if rej := s.pricingRejection(ctx, req, apiKey, messages, channelMapping); rej != nil {
+			return rej, nil
+		}
+	}
 	forwardModel := handler.OpenAIChannelForwardModel(channelMapping, reqModel)
 	if images {
 		// 图片入口按路由模型选号，渠道映射只在转发时用（本地 Images）。
@@ -724,6 +729,17 @@ func gatewayRejection(r handler.OpenAIGatewayRejection) *relayv1.SelectResponse 
 		Message: r.Message, RetryAfterSeconds: int32(r.RetryAfter), RoutingCapacityLimited: r.RoutingCapacityLimited,
 		OpsBusinessLimitedReason: r.OpsBusinessLimitedReason, AnthropicFormat: r.Anthropic, OpenaiCompatFormat: r.Compat,
 	}}}
+}
+
+// pricingRejection 是"没有价格的模型不转发"的入口检查（本地各处理函数在渠道映射之后做，service.CheckBillablePricing）：
+// 价格缺失时扣费只会记 0 元。映射前后的模型名都解析不出价格才拒绝。
+func (s *selector) pricingRejection(ctx context.Context, req *relayv1.SelectRequest, apiKey *service.APIKey, anthropic bool, mapped service.ChannelMappingResult) *relayv1.SelectResponse {
+	if err := s.deps.Gateway.CheckBillablePricing(ctx, apiKey, req.GetModel(), mapped.MappedModel); err != nil {
+		slog.Warn("relay: model pricing is not available", "model", req.GetModel(), "error", err)
+		endpoint := req.GetEndpoint()
+		return gatewayRejection(handler.PricingUnavailableRejection(anthropic, isGatewayCompatEndpoint(endpoint), endpoint == relayv1.SelectEndpoint_SELECT_ENDPOINT_GATEWAY_RESPONSES))
+	}
+	return nil
 }
 
 // billingRejection 是计费资格的拒绝；Messages 入口按 Anthropic 格式写（与本地一致）。

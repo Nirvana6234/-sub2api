@@ -70,6 +70,12 @@
           </template>
         </div>
 
+        <!-- 对话只存在访客自己的浏览器里，刷新后还在；这里说明并给出清空入口 -->
+        <div v-if="messages.length > 0 && !sending" class="trial-history-bar" data-testid="trial-history-bar">
+          <span>{{ t('guestTrial.historyLocal') }}</span>
+          <button type="button" data-testid="trial-clear-history" @click="clearHistory">{{ t('guestTrial.clearHistory') }}</button>
+        </div>
+
         <p v-if="errorMessage" class="trial-error" role="alert" data-testid="trial-error">{{ errorMessage }}</p>
 
         <!-- 次数用完：引导注册 -->
@@ -143,7 +149,10 @@ import { sanitizeUrl } from '@/utils/url'
 import { renderPlaygroundMarkdown } from '@/features/playground/markdown'
 import {
   GuestTrialError,
+  clearGuestTrialHistory,
   fetchGuestTrialState,
+  loadGuestTrialHistory,
+  saveGuestTrialHistory,
   sendGuestTrialChat,
   trimGuestTrialHistory,
   verifyGuestTrial,
@@ -200,7 +209,8 @@ async function loadState() {
   try {
     const next = await fetchGuestTrialState()
     state.value = next
-    model.value = next.default_model || next.models[0] || ''
+    // 上次用的模型还在可选列表里就沿用，否则回到默认
+    model.value = next.models.includes(savedModel) ? savedModel : next.default_model || next.models[0] || ''
     remaining.value = next.remaining
     exhausted.value = next.enabled && next.remaining <= 0
     captchaNeeded.value = next.captcha_required
@@ -209,6 +219,21 @@ async function loadState() {
   } finally {
     loading.value = false
   }
+}
+
+// 本地保存的对话（只在这个浏览器里）：打开页面时恢复，每轮结束后保存
+const restored = loadGuestTrialHistory()
+messages.value = restored.messages
+const savedModel = restored.model
+
+function persistHistory() {
+  saveGuestTrialHistory(messages.value, model.value)
+}
+
+function clearHistory() {
+  if (!window.confirm(t('guestTrial.clearHistoryConfirm'))) return
+  messages.value = []
+  clearGuestTrialHistory()
 }
 
 function useSuggestion(text: string) {
@@ -287,6 +312,7 @@ async function send() {
     sending.value = false
     controller = null
     exhausted.value = remaining.value <= 0
+    persistHistory()
   }
 }
 
@@ -318,6 +344,7 @@ function stop() {
 onMounted(() => {
   if (!appStore.publicSettingsLoaded) void appStore.fetchPublicSettings()
   void loadState()
+  if (messages.value.length > 0) void scrollToBottom()
 })
 
 onBeforeUnmount(() => controller?.abort())
@@ -348,6 +375,9 @@ onBeforeUnmount(() => controller?.abort())
 .trial-select { border: 1px solid rgba(23, 43, 57, 0.12); border-radius: 8px; background: #fff; padding: 3px 8px; font-size: 12px; color: var(--ink); }
 .trial-remaining { padding: 3px 10px; border-radius: 999px; background: var(--soft); color: var(--blue); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .trial-remaining.is-low { background: #fff4e0; color: #b45309; }
+.trial-history-bar { display: flex; justify-content: flex-end; align-items: center; gap: 8px; padding: 0 18px 10px; font-size: 11px; color: #9aa4a8; }
+.trial-history-bar button { color: var(--blue); }
+.trial-history-bar button:hover { text-decoration: underline; }
 .trial-messages { min-height: 18rem; max-height: 55vh; overflow-y: auto; padding: 18px; }
 .trial-empty { display: flex; min-height: 15rem; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
 .trial-suggestion { padding: 8px 14px; border: 1px solid rgba(23, 43, 57, 0.1); border-radius: 999px; background: #fff; font-size: 13px; color: var(--ink); transition: border-color 0.15s, color 0.15s; }

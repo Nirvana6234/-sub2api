@@ -18,8 +18,11 @@
         <span v-if="row.fee_rate > 0" class="ml-1 text-xs text-gray-400" :title="t('payment.orders.fee') + ': ' + row.fee_rate + '%'">
           ({{ t('payment.orders.fee') }} {{ row.fee_rate }}%)
         </span>
-        <div v-if="row.amount !== row.pay_amount" class="text-xs text-gray-500">
+        <div v-if="row.amount !== row.pay_amount || (row.bonus_amount ?? 0) > 0" class="text-xs text-gray-500">
           {{ t('payment.orders.creditedAmount') }}: {{ creditedAmountSymbol }}{{ row.amount.toFixed(2) }}
+          <span v-if="(row.bonus_amount ?? 0) > 0" class="ml-1 text-amber-600 dark:text-amber-400">
+            ({{ t('payment.orders.bonusIncluded', { amount: creditedAmountSymbol + (row.bonus_amount ?? 0).toFixed(2) }) }})
+          </span>
         </div>
       </div>
     </template>
@@ -28,6 +31,14 @@
     </template>
     <template #cell-status="{ value }">
       <OrderStatusBadge :status="value" />
+    </template>
+    <template #cell-balance_expires_at="{ row }">
+      <div v-if="row.balance_expires_at" class="text-xs">
+        <span :class="row.balance_lot_status === 'expired' ? 'text-gray-400 line-through' : 'text-gray-700 dark:text-gray-300'">{{ formatDate(row.balance_expires_at) }}</span>
+        <div v-if="row.balance_lot_status === 'expired'" class="text-gray-400">{{ t('balanceExpiry.orderExpired', { amount: '$' + (row.balance_expired_amount ?? 0).toFixed(2) }) }}</div>
+        <div v-else-if="row.balance_lot_status === 'depleted'" class="text-gray-400">{{ t('balanceExpiry.orderUsedUp') }}</div>
+      </div>
+      <span v-else class="text-xs text-gray-300 dark:text-gray-600">—</span>
     </template>
     <template #cell-created_at="{ value }">
       <span class="text-xs text-gray-500 dark:text-gray-400">{{ formatDate(value) }}</span>
@@ -76,6 +87,7 @@ const columns = computed((): Column[] => {
     { key: 'payment_type', label: t('payment.orders.paymentMethod') },
     { key: 'status', label: t('payment.orders.status') },
     { key: 'created_at', label: t('payment.orders.createdAt') },
+    ...(props.orders.some((o) => o.balance_expires_at) ? [{ key: 'balance_expires_at', label: t('balanceExpiry.orderColumn') }] : []),
     { key: 'actions', label: t('common.actions') },
   )
   return cols
