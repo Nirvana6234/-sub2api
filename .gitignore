@@ -309,6 +309,8 @@ docs/*
 !docs/PLAYGROUND.md
 !docs/MASTER_RELAY_NODES.md
 !docs/MASTER_RELAY_NODES_PLAN.md
+!docs/RELAY_NODE_OPS.md
+!docs/RELAY_LOCAL_TESTING.md
 !docs/legal/
 !docs/legal/*.md
 .serena/
