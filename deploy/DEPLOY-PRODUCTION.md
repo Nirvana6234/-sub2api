@@ -569,6 +569,16 @@ macOS 的版本由后台设置 `client_latest_version_mac` 单独控制（当前
 - **Jev 对齐官方**：结构校验、用户并发槽、在途预留、利润控制终检、换号状态机、composite 分组、响应校验；
   保留本地的不审计提示词、按标价入账、4xx 原样回客户端、默认模型列表。
 
+**2026-10-07 EasyPay 伪造回调修复（官方 #7881）**：二进制 `sub2api-20261007-easypay-sign-fix-r1`（`c66dc00cc`），SHA256
+`1d04a2400dbc057ef8536f1e88ae8e39a4ddc94b8d575b150140a89596874c2f`，上一版 `sub2api-20261005-upstream-0.2.13-r2`，无迁移。
+
+- 漏洞：`return_url` 的查询参数被保留进签名串，签名拼接不转义 `&`，下单签名可被复用为「支付成功」回调，不需要商户密钥。
+- 修复（移植官方 `d1aac6b98`）：`CanonicalizeReturnURL` 丢弃客户端查询参数；`VerifyNotification` 只接受易支付异步通知的标准参数。
+- 上线后探测：带 `return_url` 参数的伪造回调返回 400 `verify failed`（日志 `unexpected notify param`）。
+- 排查：线上启用了 EasyPay（ZPay）。115 笔已完成的易支付订单全部带 `payment_trade_no`，且没有「下单后 10 秒内入账」的订单，
+  未发现被利用的迹象（伪造回调不带 trade_no）。
+- 留意：参数白名单较严，若某些易支付变体回调带额外字段，真实回调会被拒，靠「向上游查单」补偿入账；发版后关注已付款未到账的订单。
+
 ## B5. 回滚
 
 bind mount 模式：把 compose 里挂载的文件名改回上一个二进制，重跑 B3 最后那条命令即可。
