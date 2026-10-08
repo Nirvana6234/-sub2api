@@ -1,22 +1,35 @@
 namespace LanAi.RelayClient.WeChatIntent;
 
-/// <summary>Messages the queue has decided to judge now, all from one conversation.</summary>
-internal sealed record DueBatch(string Chat, IReadOnlyList<ChatItem> Items);
+/// <summary>A batch the queue has decided to judge now, in one request.</summary>
+/// <param name="Chat">The conversation.</param>
+/// <param name="Items">The batch's messages, at most <see cref="IntentScheduler.MaxPerBatch"/>, the newest.</param>
+internal sealed record DueBatch(string Chat, IReadOnlyList<ChatItem> Items)
+{
+    /// <summary>The message the batch ends with — what its card is pinned to, and what it is known by.</summary>
+    public ChatItem Last => Items[^1];
+
+    /// <summary>The conversation up to and including <see cref="Last"/>.</summary>
+    public IReadOnlyList<ChatItem> Context { get; init; } = [];
+
+    /// <summary>The batch sits under a 「昨天」 or dated stamp.</summary>
+    public bool Stale { get; init; }
+}
 
 /// <summary>
-/// Which of the other person's messages to judge, and when (docs §5.1, as revised after the first
-/// self-test): every one of their messages on screen gets a card, so every one without a card is
-/// queued. Pure logic over an explicit clock.
+/// When to judge the batches on screen (docs §5.1, §6): the other person's messages between two of
+/// the user's, each batch judged in one request once the screen has settled. Pure logic over an
+/// explicit clock.
 /// </summary>
 /// <remarks>
 /// <list type="bullet">
-/// <item>A screen's messages are judged once it has been settled for a second — a scroll that is
+/// <item>A screen's batches are judged once it has been settled for a second — a scroll that is
 /// still going produces a new screen before that, which replaces the old wait.</item>
-/// <item>At most <see cref="MaxPerBatch"/> per screen, newest first, and
+/// <item>A batch is known by its last message, the transcript's own item. One whose last message
+/// is being judged is not queued again; one that changed is the caller's to offer again.</item>
+/// <item>At most the newest <see cref="MaxPerBatch"/> messages of a batch, and
 /// <see cref="PerMinute"/> requests a minute overall. Jev is cheap (about US$0.00005 a message) and
 /// TypeSafe allows 1200 a minute; the limit only stops a fault from spinning.</item>
-/// <item>A message being judged is not queued again, and one whose judgement failed waits
-/// <see cref="RetryAfter"/> before it is tried again.</item>
+/// <item>A batch whose judgement failed waits <see cref="RetryAfter"/> before it is tried again.</item>
 /// </list>
 /// </remarks>
 internal sealed class IntentScheduler
@@ -39,40 +52,47 @@ internal sealed class IntentScheduler
 
     public bool IsPaused(DateTimeOffset now) => PausedUntil is { } until && now < until;
 
-    /// <summary>A settled screen of <paramref name="chat"/>, with its messages from the other person that have no card yet.</summary>
+    /// <summary>A settled screen of <paramref name="chat"/>, with the batches on it waiting for a judgement.</summary>
     /// <remarks>
     /// A screen still showing some of the waiting messages keeps their time: the picture can change
     /// without the conversation moving (a scrollbar fading in and out under the pointer, a typing
     /// indicator), and restarting the wait on each of those meant it never ran out — on one test
     /// machine nothing was judged after the first screen.
     /// </remarks>
-    public void OnScreen(string chat, IReadOnlyList<ChatItem> withoutCard, DateTimeOffset now)
+    public void OnScreen(string chat, IReadOnlyList<ChatBatch> batches, DateTimeOffset now)
     {
-        if (withoutCard.Count == 0)
+        if (batches.Count == 0)
         {
             _pending = null;
             return;
         }
 
         DateTimeOffset due = now + Settle;
-        if (_pending is { } waiting && waiting.Chat == chat
-            && withoutCard.Any(i => waiting.Items.Any(w => ChatTranscript.Same(w, i))) && waiting.DueAt < due)
+        if (_pending is { } waiting && waiting.Chat == chat && waiting.DueAt < due
+            && batches.SelectMany(b => b.Items).Any(i => waiting.Batches.SelectMany(b => b.Items).Any(w => ChatTranscript.Same(w, i))))
         {
             due = waiting.DueAt;
         }
 
-        _pending = new Pending(chat, withoutCard, due);
+        _pending = new Pending(chat, batches, due);
     }
+
+    /// <summary>One batch, its messages as their own context: for tests.</summary>
+    internal void OnScreen(string chat, IReadOnlyList<ChatItem> batch, DateTimeOffset now) =>
+        OnScreen(chat, batch.Count == 0 ? [] : [new ChatBatch(batch, batch, Stale: false)], now);
 
     /// <summary>The user switched away or the feature stopped: forget what was waiting.</summary>
     public void Cancel() => _pending = null;
 
-    /// <summary>Called on a timer. The messages to judge now, if any; they count as in flight until <see cref="Done"/>.</summary>
-    public DueBatch? Poll(DateTimeOffset now)
+    /// <summary>
+    /// Called on a timer. The batches to judge now, the lowest on screen first; each counts as in
+    /// flight until <see cref="Done"/>.
+    /// </summary>
+    public IReadOnlyList<DueBatch> Poll(DateTimeOffset now)
     {
         if (_pending is not { } pending || now < pending.DueAt || IsPaused(now) || Muted.Contains(pending.Chat))
         {
-            return null;
+            return [];
         }
 
         _pending = null;
@@ -82,45 +102,48 @@ internal sealed class IntentScheduler
         }
 
         _failed.RemoveAll(f => now >= f.Until);
-        int room = Math.Min(MaxPerBatch, PerMinute - _recent.Count);
-        var take = new List<ChatItem>();
-        for (int i = pending.Items.Count - 1; i >= 0 && take.Count < room; i--)
+        var due = new List<DueBatch>();
+        foreach (ChatBatch batch in pending.Batches.Reverse())
         {
-            ChatItem item = pending.Items[i];
-            if (_inFlight.Any(f => f.Chat == pending.Chat && ChatTranscript.Same(f.Item, item))
-                || _failed.Any(f => f.Chat == pending.Chat && ChatTranscript.Same(f.Item, item)))
+            if (_recent.Count >= PerMinute)
+            {
+                break;
+            }
+
+            if (IsJudging(pending.Chat, batch.Last) || _failed.Any(f => f.Chat == pending.Chat && ReferenceEquals(f.Item, batch.Last)))
             {
                 continue;
             }
 
-            take.Insert(0, item);
-        }
-
-        if (take.Count == 0)
-        {
-            return null;
-        }
-
-        foreach (ChatItem item in take)
-        {
             _recent.Enqueue(now);
-            _inFlight.Add((pending.Chat, item));
+            _inFlight.Add((pending.Chat, batch.Last));
+            due.Add(new DueBatch(pending.Chat, batch.Items.TakeLast(MaxPerBatch).ToList()) { Context = batch.Context, Stale = batch.Stale });
         }
 
-        return new DueBatch(pending.Chat, take);
+        return due;
     }
 
-    /// <summary>A judgement finished. A failure keeps the message from being retried for a minute.</summary>
-    public void Done(string chat, ChatItem item, bool succeeded, DateTimeOffset now)
+    /// <summary>A judgement finished. A failure keeps the batch from being retried for a minute.</summary>
+    public void Done(string chat, ChatItem last, bool succeeded, DateTimeOffset now)
     {
-        _inFlight.RemoveAll(f => f.Chat == chat && ReferenceEquals(f.Item, item));
+        _inFlight.RemoveAll(f => f.Chat == chat && ReferenceEquals(f.Item, last));
         if (!succeeded)
         {
-            _failed.Add((chat, item, now + RetryAfter));
+            _failed.Add((chat, last, now + RetryAfter));
         }
     }
 
-    /// <summary>Whether <paramref name="item"/> is being judged now — it shows a 「分析中」 placeholder.</summary>
+    /// <summary>
+    /// Whether the batch ending in this very message — the transcript's item, not its text — is
+    /// being judged. By identity: 「好」 then another 「好」 is a batch that grew, not the same one.
+    /// </summary>
+    public bool IsJudging(string chat, ChatItem last) =>
+        _inFlight.Any(f => f.Chat == chat && ReferenceEquals(f.Item, last));
+
+    /// <summary>
+    /// Whether a bubble on screen reads like the end of a batch being judged — it shows a 「分析中」
+    /// placeholder. By text, since a screen's bubbles are not the transcript's items.
+    /// </summary>
     public bool IsInFlight(string chat, ChatItem item) =>
         _inFlight.Any(f => f.Chat == chat && ChatTranscript.Same(f.Item, item));
 
@@ -132,5 +155,5 @@ internal sealed class IntentScheduler
         _failed.Clear();
     }
 
-    private sealed record Pending(string Chat, IReadOnlyList<ChatItem> Items, DateTimeOffset DueAt);
+    private sealed record Pending(string Chat, IReadOnlyList<ChatBatch> Batches, DateTimeOffset DueAt);
 }

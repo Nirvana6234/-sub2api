@@ -27,16 +27,18 @@ public enum WeChatIntentRunState
 
 /// <summary>
 /// The 「探索」 page's 「微信消息意图判断」 card, and the pipeline behind it: reader events →
-/// screen parser → per-conversation transcript → queue → Jev → one card beside each of the other
-/// person's messages (docs §3–§6).
+/// screen parser → per-conversation transcript → queue → Jev → a card beside the last message of
+/// each batch the other person sent (docs §3–§6).
 /// </summary>
 /// <remarks>
 /// <para>
-/// Every one of their messages on screen gets a card. Each is judged once, on its own, with the
-/// conversation up to it as context — the format evaluated in §5.4. A single request covering the
-/// whole screen was measured too: as fast and as cheap, but the model then sees the replies that
-/// came after each message, and its answers drifted from the one-message ones. So the messages of a
-/// screen are sent as separate requests, a few at a time.
+/// What is judged is a batch: their messages between two of the user's, together in one request
+/// with the conversation up to its last message as context, and one card beside that message.
+/// 「在吗」「那个事」「你到底怎么想的」 mean something together that none of them means alone, and
+/// the context stops at the batch, so the model sees no replies it could drift by (the reason a
+/// whole screen in one request was rejected, §6). Every batch on screen gets a card, the ones the
+/// user has answered too, marked so and without the urge to reply quickly. A batch that changes —
+/// they wrote again, or scrolling up showed more of it — is judged again and its card replaced.
 /// </para>
 /// <para>
 /// Every public member runs on the UI thread. The reader's events arrive on its own threads and are
@@ -92,6 +94,9 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
     // The card window's fixed size in design pixels (InlineCardWindow.axaml), and the least space between two.
     private const double CardWidth = 220;
     private const double CardHeight = 44;
+    // The card of the batch still waiting for a reply, which shows the whole judgement (InlineCardWindow.axaml).
+    private const double ExpandedWidth = 300;
+    private const double ExpandedHeight = 84;
     private const double CardGap = 4;
     private const int Concurrency = 4;
 
@@ -652,7 +657,18 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
             // window to a third app changes nothing there, so the cards would stay on top of that
             // app without this.
             UpdateOverlayVisibility();
-            if (_scheduler.Poll(now) is { } due)
+
+            // The reader sends a frame only when the picture changes. A batch whose judgement failed
+            // on a still screen would otherwise wait for a change that may not come; offered again on
+            // every tick, it goes out once its minute has passed.
+            if (_lastScreen is { IsGroup: false } screen && !Muted.Contains(screen.Title)
+                && _transcripts.TryGetValue(screen.Title, out ChatTranscript? transcript))
+            {
+                _scheduler.OnScreen(screen.Title, BatchesWaiting(screen, transcript), now);
+            }
+
+            IReadOnlyList<DueBatch> due = _scheduler.Poll(now);
+            if (due.Count > 0)
             {
                 Dispatch(due);
             }
@@ -858,7 +874,8 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
         // like a conversation seen for the first time.
         string known = _transcripts.Keys.FirstOrDefault(k => ChatTranscript.SameTitle(k, screen.Title)) ?? screen.Title;
         screen = screen with { Title = known };
-        if (screen.Title != _currentChat)
+        bool switched = screen.Title != _currentChat;
+        if (switched)
         {
             _scheduler.Cancel();
         }
@@ -879,14 +896,37 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
             _transcripts[screen.Title] = transcript;
         }
 
-        // Kept for the context each judgement carries; which messages get judged no longer depends
-        // on what is "new" — every message from them on screen gets a card.
-        transcript.Apply(screen);
+        TranscriptUpdate update = transcript.Apply(screen, freshVisit: switched);
         RefreshInline();
-        List<ChatItem> waiting = WithoutCard(screen);
+        IReadOnlyList<ChatBatch> waiting = BatchesWaiting(screen, transcript);
         int them = screen.Items.Count(i => i.Speaker == ChatSpeaker.Them);
-        LogFrame(frame, screen, $"对方消息 {them} 条，其中待判断 {waiting.Count} 条（其余已有卡片或正在判断）");
+        LogFrame(frame, screen, $"对方消息 {them} 条，待判断 {waiting.Count} 批"
+            + (update.Unaligned ? "（在看较早的历史）" : string.Empty));
         _scheduler.OnScreen(screen.Title, waiting, _clock());
+    }
+
+    /// <summary>
+    /// The batches on this screen — their messages between two of the user's — that have no card
+    /// for what they are now and none coming: never judged, or changed since (they wrote again, or
+    /// scrolling up showed more of the batch).
+    /// </summary>
+    private IReadOnlyList<ChatBatch> BatchesWaiting(ChatScreen screen, ChatTranscript transcript)
+    {
+        List<AnchoredCard> cards = _anchored.GetValueOrDefault(screen.Title) ?? [];
+
+        // By identity, not by text: the transcript keeps its items, and a 「好」 judged an hour ago
+        // must not stand for the 「好」 that just arrived. A card made for fewer messages than the
+        // batch now has answered a different question.
+        //
+        // Except on a screen that could not be placed: its copy starts afresh with new objects each
+        // time it loses its place, and identity would judge the same batch over and over. There a
+        // batch that reads the same and is as long counts as judged.
+        bool byText = transcript.IsDetached;
+        bool Is(ChatItem a, ChatItem b) => ReferenceEquals(a, b) || (byText && ChatTranscript.Same(a, b));
+        return transcript.VisibleBatches(screen, WeChatIntentQuestions.ContextSize)
+            .Where(b => !(byText ? _scheduler.IsInFlight(screen.Title, b.Last) : _scheduler.IsJudging(screen.Title, b.Last))
+                && !cards.Any(c => Is(c.Anchor, b.Last) && c.Card.BatchSize == Math.Min(b.Items.Count, IntentScheduler.MaxPerBatch)))
+            .ToList();
     }
 
     /// <summary>One line per settled screen: how its lines were read, and what came of it. Counts and colours only.</summary>
@@ -898,25 +938,6 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
             + $"，聊天背景 {st.Background}，成段 {screen.Items.Count} 条（被边缘截断 {st.CutOff}，不像文字 {st.NotText}），"
             + $"标题 {screen.Title.Length} 字，此前滚动 {_scrollsSinceFrame} 次 → {outcome}");
         _scrollsSinceFrame = 0;
-    }
-
-    /// <summary>The other person's messages on <paramref name="screen"/> that have no card and none coming.</summary>
-    private List<ChatItem> WithoutCard(ChatScreen screen)
-    {
-        List<AnchoredCard> cards = _anchored.GetValueOrDefault(screen.Title) ?? [];
-        var carded = new HashSet<ChatItem>(ReferenceEqualityComparer.Instance);
-        foreach (PlacedCard placed in InlinePlacement.Place(cards, screen))
-        {
-            int index = IndexOf(screen, placed.Bubble);
-            if (index >= 0)
-            {
-                carded.Add(screen.Items[index]);
-            }
-        }
-
-        return screen.Items
-            .Where(i => i.Speaker == ChatSpeaker.Them && !i.Partial && !carded.Contains(i) && !_scheduler.IsInFlight(screen.Title, i))
-            .ToList();
     }
 
     private static int IndexOf(ChatScreen screen, BubbleBounds bubble)
@@ -932,47 +953,21 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
         return -1;
     }
 
-    /// <summary>Sends each message of the batch as its own judgement, a few at a time.</summary>
-    private void Dispatch(DueBatch batch)
+    /// <summary>Sends each batch as one judgement, with the conversation up to its last message as context.</summary>
+    private void Dispatch(IReadOnlyList<DueBatch> batches)
     {
-        ClientLog.Info($"发出判断 {batch.Items.Count} 条（{(UseRelayGroup ? "共飞分组" : "自己的 key")}）");
-        _transcripts.TryGetValue(batch.Chat, out ChatTranscript? transcript);
-        ChatScreen? screen = _lastScreen is { } s && s.Title == batch.Chat ? s : null;
-        foreach (ChatItem item in batch.Items)
+        ClientLog.Info($"发出判断 {batches.Count} 批，共 {batches.Sum(b => b.Items.Count)} 条（{(UseRelayGroup ? "共飞分组" : "自己的 key")}）");
+        foreach (DueBatch batch in batches)
         {
-            IReadOnlyList<ChatItem> context = transcript?.ContextUpTo(item, WeChatIntentQuestions.ContextSize)
-                ?? ScreenContext(screen, item);
-            _ = JudgeAsync(batch.Chat, item, context, _generation);
+            _ = JudgeAsync(batch.Chat, batch.Items, batch.Context.Count > 0 ? batch.Context : batch.Items, batch.Stale, _generation);
         }
 
         RefreshInline();
     }
 
-    /// <summary>When the transcript cannot place the message (history far back), the screen up to it is the context.</summary>
-    private static IReadOnlyList<ChatItem> ScreenContext(ChatScreen? screen, ChatItem item)
+    private async Task JudgeAsync(string chat, IReadOnlyList<ChatItem> batch, IReadOnlyList<ChatItem> context, bool stale, int generation)
     {
-        if (screen is null)
-        {
-            return [item];
-        }
-
-        int index = -1;
-        for (int i = screen.Items.Count - 1; i >= 0; i--)
-        {
-            if (ReferenceEquals(screen.Items[i], item))
-            {
-                index = i;
-                break;
-            }
-        }
-
-        return index < 0
-            ? [item]
-            : screen.Items.Take(index + 1).Where(i => i.Speaker != ChatSpeaker.Time).TakeLast(WeChatIntentQuestions.ContextSize).ToList();
-    }
-
-    private async Task JudgeAsync(string chat, ChatItem item, IReadOnlyList<ChatItem> context, int generation)
-    {
+        ChatItem item = batch[^1];
         bool succeeded = false;
         await _slots.WaitAsync().ConfigureAwait(true);
         try
@@ -983,7 +978,7 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
                 return;
             }
 
-            JevState state = JevRequestBody.StateFor(context, [item]);
+            JevState state = JevRequestBody.StateFor(context, batch);
             IJevClient? client = UseRelayGroup ? _relayJev : _jev;
             if (client is null)
             {
@@ -1001,18 +996,34 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
             {
                 succeeded = true;
                 _busyStreak = 0;
-                IntentCard card = IntentCard.From(response, chat, [item], stale: false, _clock());
                 if (!_anchored.TryGetValue(chat, out List<AnchoredCard>? cards))
                 {
                     cards = [];
                     _anchored[chat] = cards;
                 }
 
-                cards.Add(new AnchoredCard(item, card));
-                if (cards.Count > CardsPerChat)
+                // They wrote again while this was out: the longer batch has its own judgement, which
+                // this one would only contradict.
+                bool overtaken = _transcripts.TryGetValue(chat, out ChatTranscript? transcript) && transcript.FollowedByThem(item);
+                if (overtaken)
                 {
-                    _rated.Remove(cards[0]);
-                    cards.RemoveAt(0);
+                    ClientLog.Info("判断结果已过时（对方又发了消息），不显示");
+                }
+                else
+                {
+                    // A card made when the batch was shorter answered a question no longer asked.
+                    foreach (AnchoredCard earlier in cards.Where(c => batch.Any(m => ReferenceEquals(m, c.Anchor))).ToList())
+                    {
+                        cards.Remove(earlier);
+                        _rated.Remove(earlier);
+                    }
+
+                    cards.Add(new AnchoredCard(item, IntentCard.From(response, chat, batch, stale, _clock())));
+                    if (cards.Count > CardsPerChat)
+                    {
+                        _rated.Remove(cards[0]);
+                        cards.RemoveAt(0);
+                    }
                 }
 
                 if (outcome.FellBack)
@@ -1089,9 +1100,8 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
     }
 
     /// <summary>
-    /// A card beside each of the other person's messages on the last settled screen: the result
-    /// when there is one, 「分析中」 while it is being judged. To the bubble's right when there is
-    /// room before the list's edge, else just under it.
+    /// A card beside the last message of each judged batch on the last settled screen, and
+    /// 「分析中」 beside the one being judged. To the bubble's right, past the window when it must.
     /// </summary>
     private void RefreshInline()
     {
@@ -1112,7 +1122,8 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
             placedByIndex[IndexOf(screen, placed.Bubble)] = placed;
         }
 
-        var wanted = new List<(int X, int Y, PlacedCard? Card)>();
+        var wanted = new List<(int X, int Y, int Width, int Height, PlacedCard? Card)>();
+        int Px(double designPixels) => (int)Math.Round(designPixels * scale);
         for (int i = 0; i < screen.Items.Count; i++)
         {
             ChatItem item = screen.Items[i];
@@ -1124,18 +1135,16 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
             (int ix, int iy) = PlaceBeside(screen.Bounds[i], scale);
             if (placedByIndex.TryGetValue(i, out PlacedCard? placed))
             {
-                wanted.Add((ix, iy, placed));
+                wanted.Add((ix, iy, Px(ExpandedWidth), Px(ExpandedHeight), placed));
             }
             else if (_scheduler.IsInFlight(screen.Title, item))
             {
-                wanted.Add((ix, iy, null));
+                wanted.Add((ix, iy, Px(CardWidth), Px(CardHeight), null));
             }
         }
 
         // Messages close together would put their cards on top of each other: the later ones move right.
-        List<(int X, int Y, PlacedCard? Card)> cardsToShow = InlinePlacement.Arrange(wanted,
-            (int)Math.Round(CardWidth * scale), (int)Math.Round(CardHeight * scale), (int)Math.Round(CardGap * scale));
-        foreach ((int ix, int iy, PlacedCard? placed) in cardsToShow)
+        foreach ((int ix, int iy, PlacedCard? placed) in InlinePlacement.Arrange(wanted, Px(CardGap)))
         {
             int x = (int)Math.Round(ix / imageScale);
             int y = (int)Math.Round(iy / imageScale);
@@ -1160,21 +1169,43 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
         // The text's right edge plus the bubble's own padding, then a gap.
         (bubble.Right + (int)Math.Round(20 * scale), bubble.Top - (int)Math.Round(8 * scale));
 
+    /// <summary>
+    /// Whether the user still owes this batch a reply: not answered since, and not from 「昨天」 or
+    /// earlier. Only then is 「reply soon」 worth saying.
+    /// </summary>
+    private bool IsWaitingForReply(AnchoredCard anchored) =>
+        !anchored.Card.Stale
+        && _transcripts.TryGetValue(anchored.Card.Chat, out ChatTranscript? transcript)
+        && transcript.RepliedAfter(anchored.Anchor) == false;
+
+    /// <summary>
+    /// The whole judgement on the card, not only in the tooltip: both likeliest intents, then
+    /// emotion, risk and advice a line each. The first line also says where the batch stands —
+    /// waiting for a reply, answered, or from 「昨天」 or earlier.
+    /// </summary>
     private InlineCardViewModel Present(AnchoredCard anchored, int x, int y)
     {
         IntentCard card = anchored.Card;
-        string intent = card.Intent.Split(" · ")[0];
-        string action = card.Action.Split(" · ")[0];
+        bool waiting = IsWaitingForReply(anchored);
+        bool replySoon = waiting && card.ReplySoon;
+        string batch = card.BatchSize > 1 ? $" · 对方连发 {card.BatchSize} 条" : string.Empty;
+        string state = card.Stale ? " · 较早的消息" : !waiting ? " · 已回复" : replySoon ? " · ⏱ 尽快回复" : string.Empty;
         return new InlineCardViewModel
         {
             ScreenX = Overlay.WeChatX + x,
             ScreenY = Overlay.WeChatY + y,
-            Headline = $"{(card.ReplySoon ? "⏱ " : string.Empty)}{intent} · {card.Emotion}{(card.IntentUncertain ? "（不太确定）" : string.Empty)}",
-            Advice = $"{card.RiskShort} · 建议：{action}",
+            IsExpanded = true,
+            Headline = $"{card.Intent}{(card.IntentUncertain ? "（不太确定）" : string.Empty)}",
+            Lines =
+            [
+                $"情绪：{card.Emotion}{batch}{state}",
+                $"风险：{card.RiskText}",
+                $"建议：{card.Action}",
+            ],
             RiskLevel = card.RiskLevel,
-            ReplySoon = card.ReplySoon,
+            ReplySoon = replySoon,
             FeedbackGiven = _rated.Contains(anchored),
-            Detail = $"意图：{card.Intent}\n情绪：{card.Emotion}\n风险：{card.RiskText}\n建议：{card.Action}\n（右键：判断得对 / 不对 / 本会话不再分析）",
+            Detail = $"意图：{card.Intent}\n情绪：{card.Emotion}{batch}{state}\n风险：{card.RiskText}\n建议：{card.Action}\n（右键：判断得对 / 不对 / 本会话不再分析）",
             Source = anchored,
         };
     }

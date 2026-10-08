@@ -204,6 +204,110 @@ public sealed class ChatTranscriptTests
     }
 
     [Fact]
+    public void ATranscriptOfOneMessageCanBeContinued()
+    {
+        // A new contact: one message on screen. Asking three to agree meant the next screen fitted
+        // nowhere, and nothing in the conversation was judged again.
+        var transcript = new ChatTranscript();
+        transcript.Apply(Screen(T("你好")));
+
+        TranscriptUpdate update = transcript.Apply(Screen(T("你好"), M("你好呀"), T("在忙吗")));
+
+        Assert.False(update.Unaligned);
+        Assert.Equal(["你好", "你好呀", "在忙吗"], transcript.Items.Select(i => i.Text));
+    }
+
+    [Fact]
+    public void ComingBackToAConversationThatMovedOnStartsAgainFromWhatIsThere()
+    {
+        // Away in another chat while more than a screen's worth arrived: nothing overlaps the old end.
+        var transcript = new ChatTranscript();
+        transcript.Apply(Screen(Conversation[1..6]));
+        ChatScreen moved = Screen(T("后来"), M("嗯"), T("又说了"), T("好多"));
+
+        Assert.True(transcript.Apply(moved).Unaligned);           // same conversation, scrolling: history
+        TranscriptUpdate update = transcript.Apply(moved, freshVisit: true);
+
+        Assert.True(update.FirstSight);
+        Assert.Equal(["后来", "嗯", "又说了", "好多"], transcript.Items.Select(i => i.Text));
+        Assert.Equal(["又说了", "好多"], transcript.VisibleBatches(moved, 10)[^1].Items.Select(i => i.Text));
+    }
+
+    [Fact]
+    public void TheBatchesOnAScreenAreTheirMessagesBetweenTheUsersReplies()
+    {
+        var transcript = new ChatTranscript();
+        ChatScreen bottom = Screen(Conversation[5..12]);   // 你每次都说都行 | 那吃火锅 | 好 | 几点 | 七点吧 | 好 | 好
+        transcript.Apply(bottom);
+
+        IReadOnlyList<ChatBatch> batches = transcript.VisibleBatches(bottom, 10);
+        Assert.Equal(["你每次都说都行", "好", "七点吧", "好"], batches.Select(b => b.Last.Text));
+
+        // Each with the conversation up to it and nothing after: the model must not see the replies.
+        Assert.Equal(["你每次都说都行", "那吃火锅", "好", "几点", "七点吧"], batches[2].Context.Select(i => i.Text));
+
+        // Scrolled up: only the batches whose last message is on screen.
+        transcript.Apply(Screen(Conversation[5..9]));
+        Assert.Equal(["你每次都说都行", "好"], transcript.VisibleBatches(Screen(Conversation[5..9]), 10).Select(b => b.Last.Text));
+    }
+
+    [Fact]
+    public void AStampBetweenTheirMessagesDoesNotSplitTheBatch()
+    {
+        var transcript = new ChatTranscript();
+        ChatScreen screen = Screen(M("几点"), Stamp("昨天 21:00"), T("七点吧"), Stamp("昨天 21:30"), T("别迟到"));
+        transcript.Apply(screen);
+
+        ChatBatch batch = Assert.Single(transcript.VisibleBatches(screen, 10));
+
+        Assert.Equal(["七点吧", "别迟到"], batch.Items.Select(i => i.Text));
+        Assert.True(batch.Stale);
+    }
+
+    [Fact]
+    public void ABatchReachingAboveTheScreenIsTakenWhole()
+    {
+        var transcript = new ChatTranscript();
+        transcript.Apply(Screen(M("在"), T("零"), T("一"), T("二"), T("三")));
+        ChatScreen lower = Screen(T("一"), T("二"), T("三"), T("四"));     // 在 and 零 have scrolled off the top
+        transcript.Apply(lower);
+
+        Assert.Equal(["零", "一", "二", "三", "四"], Assert.Single(transcript.VisibleBatches(lower, 10)).Items.Select(i => i.Text));
+    }
+
+    [Fact]
+    public void HistoryTooFarBackForTheLiveTranscriptStillHasItsBatches()
+    {
+        var transcript = new ChatTranscript();
+        transcript.Apply(Screen(Conversation[5..12]));
+        ChatScreen farBack = Screen(M("完全"), T("不同"), T("的对话"));
+
+        Assert.True(transcript.Apply(farBack).Unaligned);
+
+        Assert.Equal(["不同", "的对话"], Assert.Single(transcript.VisibleBatches(farBack, 10)).Items.Select(i => i.Text));
+        Assert.Equal(Conversation[5..12], transcript.Items);      // the live transcript is left as it was
+    }
+
+    [Fact]
+    public void StaleRepliedAndOvertakenAreReadOffTheTranscript()
+    {
+        var transcript = new ChatTranscript();
+        transcript.Apply(Screen(Stamp("昨天 23:10"), T("你睡了吗"), Stamp("08:02"), M("刚醒"), T("那你说"), T("你最好是")));
+        ChatItem asleep = transcript.Items[1], sayIt = transcript.Items[4], better = transcript.Items[5];
+
+        Assert.True(transcript.IsStale(asleep));
+        Assert.False(transcript.IsStale(better));
+
+        Assert.True(transcript.RepliedAfter(asleep));
+        Assert.False(transcript.RepliedAfter(better));
+        Assert.Null(transcript.RepliedAfter(T("没出现过")));
+
+        Assert.True(transcript.FollowedByThem(sayIt));
+        Assert.False(transcript.FollowedByThem(better));
+        Assert.False(transcript.FollowedByThem(asleep));
+    }
+
+    [Fact]
     public void TheTranscriptKeepsTheNewestFifty()
     {
         var transcript = new ChatTranscript();

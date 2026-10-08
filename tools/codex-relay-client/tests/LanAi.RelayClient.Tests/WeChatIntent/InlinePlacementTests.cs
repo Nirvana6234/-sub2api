@@ -75,6 +75,17 @@ public sealed class InlinePlacementTests
     }
 
     [Fact]
+    public void ALargerCardIsKeptClearOfByItsOwnSize()
+    {
+        // The card still waiting for a reply is larger: a compact one under it must clear its full height.
+        var cards = new[] { (X: 600, Y: 100, Width: 300, Height: 84, Item: "waiting"), (X: 600, Y: 170, Width: 220, Height: 44, Item: "answered") };
+
+        var placed = InlinePlacement.Arrange(cards, gap: 4);
+
+        Assert.Equal([("waiting", 600), ("answered", 904)], placed.Select(p => (p.Item, p.X)));
+    }
+
+    [Fact]
     public void CardsFarEnoughApartAreNotMoved()
     {
         var cards = new[] { (X: 600, Y: 100, Item: "a"), (X: 640, Y: 148, Item: "b"), (X: 100, Y: 110, Item: "c") };

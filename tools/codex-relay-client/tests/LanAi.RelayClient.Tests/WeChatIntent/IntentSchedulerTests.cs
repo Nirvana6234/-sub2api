@@ -9,20 +9,41 @@ public sealed class IntentSchedulerTests
 
     private static ChatItem T(string text) => new(ChatSpeaker.Them, text);
 
+    private static ChatBatch Batch(params ChatItem[] items) => new(items, items, Stale: false);
+
     [Fact]
-    public void AScreenIsJudgedOnceItHasBeenStillForASecond()
+    public void ABatchIsJudgedInOneRequestOnceItHasBeenStillForASecond()
     {
         var scheduler = new IntentScheduler();
-        ChatItem[] withoutCard = [T("那你说"), T("你最好是")];
-        scheduler.OnScreen("小明", withoutCard, T0);
+        ChatItem[] batch = [T("那你说"), T("你最好是")];
+        scheduler.OnScreen("小明", batch, T0);
 
-        Assert.Null(scheduler.Poll(T0.AddSeconds(0.5)));
-        DueBatch? due = scheduler.Poll(T0.AddSeconds(1));
+        Assert.Empty(scheduler.Poll(T0.AddSeconds(0.5)));
+        DueBatch due = Assert.Single(scheduler.Poll(T0.AddSeconds(1)));
 
-        Assert.NotNull(due);
-        Assert.Equal(withoutCard, due.Items);
-        Assert.True(scheduler.IsInFlight("小明", withoutCard[0]));
-        Assert.Null(scheduler.Poll(T0.AddSeconds(5)));
+        Assert.Equal(batch, due.Items);
+        Assert.Same(batch[^1], due.Last);
+
+        // Known by its last message: that one shows 「分析中」, the others no placeholder of their own.
+        Assert.True(scheduler.IsInFlight("小明", batch[^1]));
+        Assert.False(scheduler.IsInFlight("小明", batch[0]));
+        Assert.Empty(scheduler.Poll(T0.AddSeconds(5)));
+    }
+
+    [Fact]
+    public void EveryBatchOnAScreenGoesOutTheLowestFirstWithItsOwnContext()
+    {
+        var scheduler = new IntentScheduler();
+        ChatBatch earlier = Batch(T("在吗"));
+        ChatBatch later = new([T("那你说"), T("你最好是")], [T("在吗"), new ChatItem(ChatSpeaker.Me, "在"), T("那你说"), T("你最好是")], Stale: true);
+        scheduler.OnScreen("小明", [earlier, later], T0);
+
+        IReadOnlyList<DueBatch> due = scheduler.Poll(T0.AddSeconds(1));
+
+        Assert.Equal(["你最好是", "在吗"], due.Select(d => d.Last.Text));
+        Assert.Equal(4, due[0].Context.Count);
+        Assert.True(due[0].Stale);
+        Assert.False(due[1].Stale);
     }
 
     [Fact]
@@ -32,8 +53,8 @@ public sealed class IntentSchedulerTests
         scheduler.OnScreen("小明", [T("旧的")], T0);
         scheduler.OnScreen("小明", [T("新的")], T0.AddSeconds(0.8));
 
-        Assert.Null(scheduler.Poll(T0.AddSeconds(1.2)));
-        Assert.Equal(["新的"], scheduler.Poll(T0.AddSeconds(1.8))!.Items.Select(i => i.Text));
+        Assert.Empty(scheduler.Poll(T0.AddSeconds(1.2)));
+        Assert.Equal(["新的"], Assert.Single(scheduler.Poll(T0.AddSeconds(1.8))).Items.Select(i => i.Text));
     }
 
     [Fact]
@@ -45,7 +66,7 @@ public sealed class IntentSchedulerTests
         scheduler.OnScreen("小明", [T("那你说")], T0.AddSeconds(0.8));
         scheduler.OnScreen("小明", [T("那你说"), T("你最好是")], T0.AddSeconds(1.6));
 
-        Assert.Equal(["那你说", "你最好是"], scheduler.Poll(T0.AddSeconds(1.7))!.Items.Select(i => i.Text));
+        Assert.Equal(["那你说", "你最好是"], Assert.Single(scheduler.Poll(T0.AddSeconds(1.7))).Items.Select(i => i.Text));
     }
 
     [Fact]
@@ -55,25 +76,45 @@ public sealed class IntentSchedulerTests
         scheduler.OnScreen("小明", [T("那你说")], T0);
         scheduler.OnScreen("小红", [T("那你说")], T0.AddSeconds(0.8));
 
-        Assert.Null(scheduler.Poll(T0.AddSeconds(1.2)));
-        Assert.Equal("小红", scheduler.Poll(T0.AddSeconds(1.8))!.Chat);
+        Assert.Empty(scheduler.Poll(T0.AddSeconds(1.2)));
+        Assert.Equal("小红", Assert.Single(scheduler.Poll(T0.AddSeconds(1.8))).Chat);
     }
 
     [Fact]
-    public void MessagesInFlightAreNotSentAgain()
+    public void ABatchInFlightIsNotSentAgainButOneThatGrewIs()
     {
         var scheduler = new IntentScheduler();
-        ChatItem first = T("那你说");
+        ChatItem sayIt = T("那你说");
+        scheduler.OnScreen("小明", [sayIt], T0);
+        scheduler.Poll(T0.AddSeconds(1));
+
+        scheduler.OnScreen("小明", [sayIt], T0.AddSeconds(2));
+        Assert.Empty(scheduler.Poll(T0.AddSeconds(3)));
+
+        // They wrote again: the longer batch is a new question, asked whole.
+        scheduler.OnScreen("小明", [sayIt, T("你最好是")], T0.AddSeconds(4));
+        Assert.Equal(["那你说", "你最好是"], Assert.Single(scheduler.Poll(T0.AddSeconds(5))).Items.Select(i => i.Text));
+    }
+
+    [Fact]
+    public void ABatchEndingInTheSameWordsAsTheOneBeingJudgedIsStillANewBatch()
+    {
+        // 「好」 being judged, then another 「好」: the batch grew, though its last words did not change.
+        var scheduler = new IntentScheduler();
+        ChatItem first = T("好");
         scheduler.OnScreen("小明", [first], T0);
         scheduler.Poll(T0.AddSeconds(1));
 
-        scheduler.OnScreen("小明", [T("那你说"), T("你最好是")], T0.AddSeconds(2));
+        ChatItem second = T("好");
+        Assert.False(scheduler.IsJudging("小明", second));
+        Assert.True(scheduler.IsInFlight("小明", second));      // the placeholder still goes by the bubble's text
+        scheduler.OnScreen("小明", [first, second], T0.AddSeconds(2));
 
-        Assert.Equal(["你最好是"], scheduler.Poll(T0.AddSeconds(3))!.Items.Select(i => i.Text));
+        Assert.Same(second, Assert.Single(scheduler.Poll(T0.AddSeconds(3))).Last);
     }
 
     [Fact]
-    public void AFailedMessageWaitsAMinuteBeforeTryingAgain()
+    public void AFailedBatchWaitsAMinuteBeforeTryingAgain()
     {
         var scheduler = new IntentScheduler();
         ChatItem item = T("那你说");
@@ -81,21 +122,21 @@ public sealed class IntentSchedulerTests
         scheduler.Poll(T0.AddSeconds(1));
         scheduler.Done("小明", item, succeeded: false, T0.AddSeconds(2));
 
-        scheduler.OnScreen("小明", [T("那你说")], T0.AddSeconds(3));
-        Assert.Null(scheduler.Poll(T0.AddSeconds(4)));
+        scheduler.OnScreen("小明", [item], T0.AddSeconds(3));
+        Assert.Empty(scheduler.Poll(T0.AddSeconds(4)));
 
-        scheduler.OnScreen("小明", [T("那你说")], T0.AddSeconds(62));
-        Assert.NotNull(scheduler.Poll(T0.AddSeconds(63)));
+        scheduler.OnScreen("小明", [item], T0.AddSeconds(62));
+        Assert.Single(scheduler.Poll(T0.AddSeconds(63)));
     }
 
     [Fact]
-    public void AtMostTenAScreenNewestFirst()
+    public void ALongBatchSendsItsNewestTen()
     {
         var scheduler = new IntentScheduler();
         ChatItem[] many = Enumerable.Range(0, 14).Select(i => T($"第{i}条")).ToArray();
         scheduler.OnScreen("小明", many, T0);
 
-        DueBatch due = scheduler.Poll(T0.AddSeconds(1))!;
+        DueBatch due = Assert.Single(scheduler.Poll(T0.AddSeconds(1)));
 
         Assert.Equal(IntentScheduler.MaxPerBatch, due.Items.Count);
         Assert.Equal("第13条", due.Items[^1].Text);
@@ -103,16 +144,26 @@ public sealed class IntentSchedulerTests
     }
 
     [Fact]
+    public void AtMostSixtyRequestsAMinute()
+    {
+        var scheduler = new IntentScheduler();
+        ChatBatch[] batches = Enumerable.Range(0, 70).Select(i => Batch(T($"第{i}批"))).ToArray();
+        scheduler.OnScreen("小明", batches, T0);
+
+        Assert.Equal(IntentScheduler.PerMinute, scheduler.Poll(T0.AddSeconds(1)).Count);
+    }
+
+    [Fact]
     public void PausedAndMutedConversationsAreNotJudged()
     {
         var scheduler = new IntentScheduler { PausedUntil = T0.AddMinutes(30) };
         scheduler.OnScreen("小明", [T("在吗")], T0);
-        Assert.Null(scheduler.Poll(T0.AddSeconds(5)));
+        Assert.Empty(scheduler.Poll(T0.AddSeconds(5)));
 
         scheduler.PausedUntil = null;
         scheduler.Muted.Add("小明");
         scheduler.OnScreen("小明", [T("在吗")], T0);
-        Assert.Null(scheduler.Poll(T0.AddSeconds(5)));
+        Assert.Empty(scheduler.Poll(T0.AddSeconds(5)));
     }
 
     [Fact]

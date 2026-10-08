@@ -85,9 +85,10 @@ internal static partial class ChatScreenParser
         var bubbles = new List<Bubble>();
         var perSpeaker = new int[3];
         var dropped = new Dictionary<string, int>(StringComparer.Ordinal);
+        Edges edges = LearnEdges(lines, area, background, scale);
         foreach (ReaderLine line in lines.OrderBy(l => l.Y).ThenBy(l => l.X))
         {
-            ChatSpeaker? speaker = Classify(line, area, background);
+            ChatSpeaker? speaker = Classify(line, area, background, edges);
             if (speaker is null)
             {
                 string colour = line.Bg is [int dr, int dg, int db] ? $"({dr},{dg},{db})" : "(无)";
@@ -147,47 +148,113 @@ internal static partial class ChatScreenParser
     /// <summary>A group's title ends in its member count: 「家人群(12)」 or 「家人群（12）」.</summary>
     internal static bool IsGroupTitle(string title) => GroupTitle().IsMatch(title);
 
-    private static ChatSpeaker? Classify(ReaderLine line, ReaderRect area, (int R, int G, int B) background)
+    /// <summary>
+    /// Where this screen's bubbles line up: the other person's text starts at one left edge, past
+    /// their avatar, and the user's ends at one right edge, before theirs. Either is null when no
+    /// line on screen gives it.
+    /// </summary>
+    private readonly record struct Edges(int? ThemLeft, int? MeRight, int Tolerance);
+
+    /// <summary>
+    /// The two edges, learned from the lines whose colour and side agree — a grey line starting in
+    /// the left half, a green one ending in the right half — the most common value of each. Learned
+    /// rather than measured once, since the avatar column moves with the scale and the window, and
+    /// a line whose colour was misread on the wrong side does not count.
+    /// </summary>
+    private static Edges LearnEdges(ReaderLine[] lines, ReaderRect area, (int R, int G, int B) background, double scale)
+    {
+        int tolerance = (int)Math.Round(8 * scale) + 4;
+        var lefts = new List<int>();
+        var rights = new List<int>();
+        foreach (ReaderLine line in lines)
+        {
+            switch (ByColour(line, area, background))
+            {
+                case ChatSpeaker.Them:
+                    lefts.Add(line.X);
+                    break;
+                case ChatSpeaker.Me when line.X + line.W - area.X > area.W * 0.55:
+                    rights.Add(line.X + line.W);
+                    break;
+            }
+        }
+
+        return new Edges(MostCommon(lefts, tolerance), MostCommon(rights, tolerance), tolerance);
+    }
+
+    /// <summary>The value most others lie within <paramref name="tolerance"/> of; null for none.</summary>
+    private static int? MostCommon(List<int> values, int tolerance) =>
+        values.Count == 0 ? null : values.MaxBy(v => values.Count(o => Math.Abs(o - v) <= tolerance));
+
+    /// <summary>
+    /// The speaker by alignment first: text starting at the other person's edge and not ending at
+    /// the user's is theirs, and the other way round. The colour behind a line is sampled beside
+    /// the text and can land outside a short bubble; the edges cannot be misread that way. Lines
+    /// that touch both edges or neither — long ones, a bubble's shorter wrapped lines — fall back
+    /// to the colour.
+    /// </summary>
+    private static ChatSpeaker? Classify(ReaderLine line, ReaderRect area, (int R, int G, int B) background, Edges edges)
     {
         if (line.Bg is not [int r, int g, int b])
         {
             return null;
         }
 
-        if (g > r + 40 && g > b + 40)
-        {
-            return ChatSpeaker.Me;
-        }
-
-        int centre = line.X + (line.W / 2);
-        int areaCentre = area.X + (area.W / 2);
         bool onBackground = Math.Abs(r - background.R) <= 4 && Math.Abs(g - background.G) <= 4 && Math.Abs(b - background.B) <= 4;
         if (onBackground)
         {
             // Centred and small: a time stamp or a system notice. Anything else on the bare
             // background (a quoted reply, a sender name, a link card's caption) is dropped.
+            int centre = line.X + (line.W / 2);
+            int areaCentre = area.X + (area.W / 2);
             return Math.Abs(centre - areaCentre) <= area.W * 0.08 ? ChatSpeaker.Time : null;
         }
 
-        // A light neutral bubble starting in the left half: the other person.
-        bool neutral = Math.Abs(r - g) <= 8 && Math.Abs(g - b) <= 8 && r >= 200;
-        if (neutral && line.X - area.X < area.W * 0.45)
+        // Only a bubble's colour, green or light grey, is corrected by the edges; one matching
+        // neither (a theme not calibrated yet) is still not guessed at.
+        bool green = IsGreen(r, g, b);
+        bool bubbleColour = green || IsLightNeutral(r, g, b);
+        bool atThemEdge = edges.ThemLeft is int left && Math.Abs(line.X - left) <= edges.Tolerance;
+        bool atMeEdge = edges.MeRight is int right && Math.Abs(line.X + line.W - right) <= edges.Tolerance;
+        if (bubbleColour && atThemEdge != atMeEdge)
         {
-            return ChatSpeaker.Them;
+            return atThemEdge ? ChatSpeaker.Them : ChatSpeaker.Me;
         }
 
-        return null;
+        return ByColour(line, area, background);
     }
 
-    /// <summary>The next line of the same bubble: same colour, same left edge, directly below.</summary>
+    private static bool IsGreen(int r, int g, int b) => g > r + 40 && g > b + 40;
+
+    private static bool IsLightNeutral(int r, int g, int b) => Math.Abs(r - g) <= 8 && Math.Abs(g - b) <= 8 && r >= 200;
+
+    /// <summary>The speaker by the colour behind the line alone: green is the user, a light grey starting in the left half the other person.</summary>
+    private static ChatSpeaker? ByColour(ReaderLine line, ReaderRect area, (int R, int G, int B) background)
+    {
+        if (line.Bg is not [int r, int g, int b])
+        {
+            return null;
+        }
+
+        if (IsGreen(r, g, b))
+        {
+            return ChatSpeaker.Me;
+        }
+
+        bool onBackground = Math.Abs(r - background.R) <= 4 && Math.Abs(g - background.G) <= 4 && Math.Abs(b - background.B) <= 4;
+        return !onBackground && IsLightNeutral(r, g, b) && line.X - area.X < area.W * 0.45 ? ChatSpeaker.Them : null;
+    }
+
+    /// <summary>
+    /// The next line of the same bubble: same left edge, directly below. Not the same colour: the
+    /// speaker already agrees, and one misread colour would split a bubble in two.
+    /// </summary>
     private static bool Continues(Bubble bubble, ReaderLine line, double scale)
     {
         ReaderLine last = bubble.Lines[^1];
-        bool sameColour = last.Bg.Length == 3 && line.Bg.Length == 3
-            && Math.Abs(last.Bg[0] - line.Bg[0]) <= 8 && Math.Abs(last.Bg[1] - line.Bg[1]) <= 8 && Math.Abs(last.Bg[2] - line.Bg[2]) <= 8;
         int gap = line.Y - (last.Y + last.H);
         int lineHeight = Math.Max(last.H, line.H);
-        return sameColour && gap <= lineHeight * 1.1 && Math.Abs(line.X - bubble.Lines[0].X) <= 8 * scale + 6;
+        return gap <= lineHeight * 1.1 && Math.Abs(line.X - bubble.Lines[0].X) <= 8 * scale + 6;
     }
 
     /// <summary>

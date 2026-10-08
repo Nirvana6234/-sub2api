@@ -45,6 +45,46 @@ public sealed class ChatScreenParserTests
     }
 
     [Fact]
+    public void AShortBubbleWhoseColourWasMisreadIsPlacedByItsEdge()
+    {
+        // Measured on a real chat: two short messages from them came back sampled green, were taken
+        // for the user's, and their batches vanished. Their text starts at the other person's edge.
+        ChatScreen screen = ChatScreenParser.Parse(Frame("小明",
+            Them(140, "结果还扣了钱"),
+            Me(200, "但是真心不好用"),
+            Them(260, "出图是慢的") with { Bg = Green },
+            Me(320, "不是慢，是没感觉"),
+            Them(380, "什么感觉") with { Bg = Green },
+            Me(440, "你看看网页版出图") with { Bg = Grey }), 1.0);
+
+        Assert.Equal(
+            [ChatSpeaker.Them, ChatSpeaker.Me, ChatSpeaker.Them, ChatSpeaker.Me, ChatSpeaker.Them, ChatSpeaker.Me],
+            screen.Items.Select(i => i.Speaker));
+    }
+
+    [Fact]
+    public void ALongLineTouchingBothEdgesGoesByItsColour()
+    {
+        ChatScreen screen = ChatScreenParser.Parse(Frame("小明",
+            Them(140, "先说一句"),
+            Me(200, "我也说一句"),
+            new ReaderLine { Text = "一条从左边一直写到右边的很长很长的话", X = 383, Y = 260, W = 1075 - 383, H = 13, Bg = Green }), 1.0);
+
+        Assert.Equal(ChatSpeaker.Me, screen.Items[^1].Speaker);
+    }
+
+    [Fact]
+    public void AMisreadColourOnAWrappedLineDoesNotSplitTheBubble()
+    {
+        ChatScreen screen = ChatScreenParser.Parse(Frame("小明",
+            Them(187, "先说一句"),
+            Them(243, "这是一段很长的话第一行"),
+            Them(262, "接着是第二行") with { Bg = Green }), 1.0);
+
+        Assert.Equal(["先说一句", "这是一段很长的话第一行接着是第二行"], screen.Items.Select(i => i.Text));
+    }
+
+    [Fact]
     public void WrappedLinesOfOneBubbleAreJoined()
     {
         // Measured: two lines of one bubble at y 243 and 262, 13 px high.

@@ -12,11 +12,13 @@
        chat under it stays readable; solid while the pointer is on it. Filled from code by
        InlineCardHost: the windows are pooled and re-pointed at another card on every screen.
 
-       A fixed size, two lines cut short with an ellipsis, the whole of it in the tooltip. Sized
+       Two fixed sizes, lines cut short with an ellipsis, the whole of it in the tooltip. Sized
        to its content, the card changed height with every text and, moved from the client's
        screen onto WeChat's on a two-screen setup with different scaling, came up narrow and tall;
-       a fixed size also lets WeChatIntentViewModel keep cards from piling on each other. Its
-       220x44 must match CardWidth / CardHeight there. -->
+       a fixed size also lets WeChatIntentViewModel keep cards from piling on each other.
+       Expanded, 300x84 (ExpandedWidth / ExpandedHeight there): every judgement, with emotion,
+       risk and advice written out under the headline. Compact, 220x44 (CardWidth / CardHeight):
+       only the 「分析中…」 placeholder. -->
   <Border Name="Card" Background="#EEFFFFFF" CornerRadius="6" BorderBrush="#D1D5DB" BorderThickness="1">
     <Border.ContextMenu>
       <ContextMenu>
@@ -33,6 +35,12 @@
                    TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
         <TextBlock Name="Advice" FontSize="11" Foreground="#4B5563" Margin="0,1,0,0"
                    TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+        <TextBlock Name="Line1" FontSize="11" Foreground="#374151" Margin="0,2,0,0"
+                   TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" IsVisible="False" />
+        <TextBlock Name="Line2" FontSize="11" Foreground="#374151" Margin="0,1,0,0"
+                   TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" IsVisible="False" />
+        <TextBlock Name="Line3" FontSize="11" Foreground="#374151" Margin="0,1,0,0"
+                   TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" IsVisible="False" />
       </StackPanel>
     </DockPanel>
   </Border>

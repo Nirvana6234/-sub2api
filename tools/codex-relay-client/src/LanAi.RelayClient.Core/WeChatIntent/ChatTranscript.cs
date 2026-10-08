@@ -22,6 +22,18 @@ internal sealed record TranscriptUpdate
 }
 
 /// <summary>
+/// One batch: the other person's messages between two of the user's, judged together as one.
+/// </summary>
+/// <param name="Items">Their messages, oldest first; time stamps among them left out.</param>
+/// <param name="Context">The conversation up to and including the batch's last message, time stamps left out.</param>
+/// <param name="Stale">The batch sits under a 「昨天」 or dated stamp.</param>
+internal sealed record ChatBatch(IReadOnlyList<ChatItem> Items, IReadOnlyList<ChatItem> Context, bool Stale)
+{
+    /// <summary>The message the batch ends with — what its card is pinned to.</summary>
+    public ChatItem Last => Items[^1];
+}
+
+/// <summary>
 /// One conversation's messages as far as they have been seen, stitched together from screens
 /// that scroll (docs §4.5 item 5). Memory only; never written anywhere.
 /// </summary>
@@ -49,6 +61,13 @@ internal sealed class ChatTranscript
     private List<ChatItem>? _detached;
 
     public IReadOnlyList<ChatItem> Items => _items;
+
+    /// <summary>
+    /// The screen could not be placed in the live transcript and is followed in a copy of its own
+    /// (<see cref="VisibleBatches"/> come from it). That copy starts afresh whenever it loses its
+    /// place, so its items are not the same objects from one screen to the next.
+    /// </summary>
+    public bool IsDetached => _detached is not null;
 
     /// <summary>The last <paramref name="count"/> messages, time stamps left out, oldest first — the context sent to Jev.</summary>
     public IReadOnlyList<ChatItem> Recent(int count) =>
@@ -97,10 +116,17 @@ internal sealed class ChatTranscript
         return batch;
     }
 
-    public TranscriptUpdate Apply(ChatScreen screen)
+    /// <param name="screen">The settled screen.</param>
+    /// <param name="freshVisit">
+    /// The user has just switched to this conversation from another. A screen that then fits
+    /// nowhere is the conversation having moved on while it was away — more new messages than a
+    /// screen holds — not a jump into history, which takes scrolling inside the conversation. The
+    /// transcript starts again from it, rather than waiting for a join that will never come.
+    /// </param>
+    public TranscriptUpdate Apply(ChatScreen screen, bool freshVisit = false)
     {
         ArgumentNullException.ThrowIfNull(screen);
-        List<ChatItem> seen = screen.Items.Where(i => !i.Partial || screen.Items.Count == 1).ToList();
+        List<ChatItem> seen = Seen(screen);
         if (seen.Count == 0)
         {
             return TranscriptUpdate.Nothing;
@@ -116,6 +142,11 @@ internal sealed class ChatTranscript
         {
             if (!Joins(_items, seen))
             {
+                if (freshVisit)
+                {
+                    return Restart(seen, screen.IsAtBottom);
+                }
+
                 Place(_detached, seen, judge: false, screen.IsAtBottom);
                 return new TranscriptUpdate { Unaligned = true };
             }
@@ -128,6 +159,11 @@ internal sealed class ChatTranscript
             return placed;
         }
 
+        if (freshVisit)
+        {
+            return Restart(seen, screen.IsAtBottom);
+        }
+
         // No place for it: a jump far back in history, or a different conversation under the
         // same title. It is followed in a detached copy while the live transcript — whose end is
         // the conversation's real end — stays as it was. Scrolling back down then continues the
@@ -137,10 +173,174 @@ internal sealed class ChatTranscript
         return new TranscriptUpdate { Unaligned = true };
     }
 
+    /// <summary>
+    /// The batches whose last message is on <paramref name="screen"/> — where their cards go — each
+    /// whole as far as it has been seen, which may reach above the screen. Call after
+    /// <see cref="Apply"/>. While the user reads history too far back for the live transcript, the
+    /// batches come from the copy that follows it.
+    /// </summary>
+    /// <param name="contextSize">How many messages of context each batch carries.</param>
+    public IReadOnlyList<ChatBatch> VisibleBatches(ChatScreen screen, int contextSize)
+    {
+        ArgumentNullException.ThrowIfNull(screen);
+        List<ChatItem> seen = Seen(screen);
+        List<ChatItem> list = _detached ?? _items;
+        if (seen.Count == 0 || Locate(list, seen) is not (int start, int end))
+        {
+            return [];
+        }
+
+        var batches = new List<ChatBatch>();
+        for (int i = 0; i < list.Count;)
+        {
+            if (list[i].Speaker != ChatSpeaker.Them)
+            {
+                i++;
+                continue;
+            }
+
+            // Up to the user's next message: stamps between their messages do not split a batch.
+            var items = new List<ChatItem>();
+            int last = i;
+            for (; i < list.Count && list[i].Speaker != ChatSpeaker.Me; i++)
+            {
+                if (list[i].Speaker == ChatSpeaker.Them)
+                {
+                    items.Add(list[i]);
+                    last = i;
+                }
+            }
+
+            if (last >= start && last <= end)
+            {
+                IReadOnlyList<ChatItem> context = list.Take(last + 1).Where(item => item.Speaker != ChatSpeaker.Time).TakeLast(contextSize).ToList();
+                batches.Add(new ChatBatch(items, context, IsStaleAt(list, last)));
+            }
+        }
+
+        return batches;
+    }
+
+    /// <summary>
+    /// Whether the message sits under a 「昨天」 or dated stamp: the nearest stamp above it, since
+    /// WeChat adds a stamp only after a pause and the messages under one follow it closely.
+    /// </summary>
+    public bool IsStale(ChatItem message) => IsStaleAt(_items, IndexOf(message));
+
+    private static bool IsStaleAt(List<ChatItem> list, int index)
+    {
+        for (int i = index - 1; i >= 0; i--)
+        {
+            if (list[i].Speaker == ChatSpeaker.Time)
+            {
+                return IsOldStamp(list[i].Text);
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// The part of <paramref name="list"/> that <paramref name="seen"/> shows, as first and last
+    /// index: where the whole screen fits, the latest such place. Failing that, the screen reaching
+    /// above a full transcript — whose earlier history found no room — its lower part over the
+    /// transcript's start. Null when it shows none of it.
+    /// </summary>
+    private static (int Start, int End)? Locate(List<ChatItem> list, List<ChatItem> seen)
+    {
+        for (int start = list.Count - seen.Count; start >= 0; start--)
+        {
+            if (Matches(list, start, seen, 0, seen.Count))
+            {
+                return (start, start + seen.Count - 1);
+            }
+        }
+
+        for (int run = Math.Min(list.Count, seen.Count - 1); run >= Need(list, seen); run--)
+        {
+            if (run > 0 && Matches(seen, seen.Count - run, list, 0, run))
+            {
+                return (0, run - 1);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Whether the user has written since <paramref name="message"/>. Null when the message is no
+    /// longer in the transcript.
+    /// </summary>
+    public bool? RepliedAfter(ChatItem message)
+    {
+        int index = IndexOf(message);
+        if (index < 0)
+        {
+            return null;
+        }
+
+        for (int i = index + 1; i < _items.Count; i++)
+        {
+            if (_items[i].Speaker == ChatSpeaker.Me)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Whether another message from them came straight after <paramref name="message"/>: a batch
+    /// ending there has grown, and a judgement of it has been overtaken by one of the longer batch.
+    /// </summary>
+    public bool FollowedByThem(ChatItem message)
+    {
+        int index = IndexOf(message);
+        if (index < 0)
+        {
+            return false;
+        }
+
+        for (int i = index + 1; i < _items.Count; i++)
+        {
+            if (_items[i].Speaker != ChatSpeaker.Time)
+            {
+                return _items[i].Speaker == ChatSpeaker.Them;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>The message itself if the transcript holds it, else the newest one that reads the same.</summary>
+    private int IndexOf(ChatItem message)
+    {
+        int index = _items.FindLastIndex(i => ReferenceEquals(i, message));
+        return index >= 0 ? index : _items.FindLastIndex(i => Same(i, message));
+    }
+
+    private static List<ChatItem> Seen(ChatScreen screen) =>
+        screen.Items.Where(i => !i.Partial || screen.Items.Count == 1).ToList();
+
+    private TranscriptUpdate Restart(List<ChatItem> seen, bool? atBottom)
+    {
+        _detached = null;
+        _items.Clear();
+        return FirstSight(seen, atBottom);
+    }
+
+    /// <summary>
+    /// How many consecutive items must agree for <paramref name="seen"/> to continue a transcript of
+    /// <paramref name="items"/>: <see cref="MinimumRun"/>, or all there are when either side is shorter.
+    /// A transcript of one or two messages could otherwise never be continued.
+    /// </summary>
+    private static int Need(List<ChatItem> items, List<ChatItem> seen) => Math.Min(MinimumRun, Math.Min(seen.Count, items.Count));
+
     /// <summary>Whether <paramref name="seen"/> continues <paramref name="items"/>' end or lies inside it.</summary>
     private static bool Joins(List<ChatItem> items, List<ChatItem> seen)
     {
-        int need = Math.Min(MinimumRun, seen.Count);
+        int need = Need(items, seen);
         for (int run = Math.Min(items.Count, seen.Count); run >= need; run--)
         {
             if (Matches(items, items.Count - run, seen, 0, run))
@@ -167,7 +367,7 @@ internal sealed class ChatTranscript
     /// </summary>
     private static TranscriptUpdate? Place(List<ChatItem> items, List<ChatItem> seen, bool judge, bool? atBottom)
     {
-        int need = Math.Min(MinimumRun, seen.Count);
+        int need = Need(items, seen);
 
         // 1. The screen continues the transcript: its first items are the transcript's last.
         //    Whatever follows the overlap is new.

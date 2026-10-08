@@ -192,26 +192,227 @@ public sealed class WeChatIntentViewModelTests : IDisposable
     }
 
     [Fact]
-    public async Task EveryMessageFromThemGetsItsOwnJudgementWithOnlyWhatCameBefore()
+    public async Task EachBatchBetweenTheUsersRepliesIsJudgedTogetherInOneRequest()
     {
         var (vm, reader, jev) = Create();
         await vm.SetEnabledAsync(true);
         reader.Raise(InFront());
         Assert.True(vm.Overlay.IsVisible);
 
-        reader.Raise(Frame("小明", Them(187, "你今天是不是又忘了"), Me(250, "记得"), Them(320, "那你说"), Me(390, "等一下")));
+        reader.Raise(Frame("小明", Them(187, "你今天是不是又忘了"), Me(250, "记得"), Them(320, "那你说"), Them(390, "你最好是")));
         Assert.Empty(jev.Seen);
         Advance(1);
 
+        // One request a batch, each with the conversation up to it and nothing after.
         Assert.Equal(2, jev.Seen.Count);
-        JevState first = jev.Seen.Single(s => s.LatestFromThem[0] == "你今天是不是又忘了");
-        JevState second = jev.Seen.Single(s => s.LatestFromThem[0] == "那你说");
-        Assert.Equal(["你今天是不是又忘了"], first.Conversation.Select(t => t.Text));
-        Assert.Equal(["你今天是不是又忘了", "记得", "那你说"], second.Conversation.Select(t => t.Text));
+        JevState earlier = jev.Seen.Single(s => s.LatestFromThem.SequenceEqual(["你今天是不是又忘了"]));
+        JevState state = jev.Seen.Single(s => s.LatestFromThem.SequenceEqual(["那你说", "你最好是"]));
+        Assert.Equal(["你今天是不是又忘了"], earlier.Conversation.Select(t => t.Text));
+        Assert.Equal(["你今天是不是又忘了", "记得", "那你说", "你最好是"], state.Conversation.Select(t => t.Text));
 
-        Assert.Equal([111 + 187 - 8, 111 + 320 - 8], vm.Overlay.InlineCards.Select(c => c.ScreenY));
-        Assert.All(vm.Overlay.InlineCards, c => Assert.StartsWith("⏱ 在考验你 93%", c.Headline, StringComparison.Ordinal));
+        // One card a batch, beside its last message.
+        Assert.Equal([111 + 187 - 8, 111 + 390 - 8], vm.Overlay.InlineCards.Select(c => c.ScreenY));
+        Assert.Contains("已回复", vm.Overlay.InlineCards[0].Lines[0], StringComparison.Ordinal);
+        InlineCardViewModel card = vm.Overlay.InlineCards[1];
+        // Still waiting for a reply: the whole judgement is on the card, not only in the tooltip.
+        Assert.True(card.IsExpanded);
+        Assert.StartsWith("在考验你 93%", card.Headline, StringComparison.Ordinal);
+        Assert.Equal(3, card.Lines.Count);
+        Assert.StartsWith("情绪：", card.Lines[0], StringComparison.Ordinal);
+        Assert.Contains("对方连发 2 条", card.Lines[0], StringComparison.Ordinal);
+        Assert.Contains("⏱ 尽快回复", card.Lines[0], StringComparison.Ordinal);
+        Assert.StartsWith("风险：", card.Lines[1], StringComparison.Ordinal);
+        Assert.StartsWith("建议：", card.Lines[2], StringComparison.Ordinal);
+        Assert.Contains("对方连发 2 条", card.Detail, StringComparison.Ordinal);
         Assert.StartsWith("今日 2 次", vm.TodayText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task BatchesTheUserHasAlreadyAnsweredGetCardsMarkedAnswered()
+    {
+        var (vm, reader, jev) = Create();
+        await vm.SetEnabledAsync(true);
+        reader.Raise(InFront());
+
+        reader.Raise(Frame("小明", Them(187, "你今天是不是又忘了"), Me(250, "记得"), Them(320, "那你说"), Me(390, "等一下")));
+        Advance(1);
+
+        Assert.Equal(2, jev.Seen.Count);
+        Assert.Equal(2, vm.Overlay.InlineCards.Count);
+        Assert.All(vm.Overlay.InlineCards, c =>
+        {
+            Assert.Contains("已回复", c.Lines[0], StringComparison.Ordinal);
+            Assert.False(c.ReplySoon);
+        });
+
+        // Judged once: the same screen again sends nothing.
+        reader.Raise(new ReaderEvent { Type = ReaderEvent.Scrolling });
+        reader.Raise(Frame("小明", Them(187, "你今天是不是又忘了"), Me(250, "记得"), Them(320, "那你说"), Me(390, "等一下")));
+        Advance(2);
+        Assert.Equal(2, jev.Seen.Count);
+    }
+
+    [Fact]
+    public async Task ScrollingUpToShowMoreOfABatchJudgesItAgainWhole()
+    {
+        var (vm, reader, jev) = Create();
+        await vm.SetEnabledAsync(true);
+        reader.Raise(InFront());
+
+        // The batch's start is above the screen.
+        reader.Raise(Frame("小明", Them(187, "二"), Them(250, "三"), Me(320, "嗯"), Them(390, "那你说")));
+        Advance(1);
+        Assert.Contains(jev.Seen, s => s.LatestFromThem.SequenceEqual(["二", "三"]));
+
+        // Scrolled up a little: 一 comes into view, and the batch is one message longer.
+        reader.Raise(new ReaderEvent { Type = ReaderEvent.Scrolling });
+        reader.Raise(Frame("小明", Me(120, "在"), Them(187, "一"), Them(250, "二"), Them(320, "三"), Me(390, "嗯")));
+        Advance(1);
+
+        Assert.Contains(jev.Seen, s => s.LatestFromThem.SequenceEqual(["一", "二", "三"]));
+        Assert.Equal(3, jev.Seen.Count);
+        Assert.Contains("对方连发 3 条", Assert.Single(vm.Overlay.InlineCards).Lines[0], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ABatchThatGrowsIsJudgedAgainWholeAndItsEarlierCardGoes()
+    {
+        var (vm, reader, jev) = Create();
+        await vm.SetEnabledAsync(true);
+        reader.Raise(InFront());
+
+        reader.Raise(Frame("小明", Me(187, "在"), Them(250, "那你说")));
+        Advance(1);
+        Assert.Equal(111 + 250 - 8, Assert.Single(vm.Overlay.InlineCards).ScreenY);
+
+        reader.Raise(new ReaderEvent { Type = ReaderEvent.Scrolling });
+        reader.Raise(Frame("小明", Me(187, "在"), Them(250, "那你说"), Them(320, "你最好是")));
+        Advance(1);
+
+        Assert.Equal(2, jev.Seen.Count);
+        Assert.Equal(["那你说", "你最好是"], jev.Seen[1].LatestFromThem);
+        InlineCardViewModel card = Assert.Single(vm.Overlay.InlineCards);
+        Assert.Equal(111 + 320 - 8, card.ScreenY);
+    }
+
+    [Fact]
+    public async Task AnotherOfTheSameShortMessageWhileTheFirstIsJudgedIsJudgedAsTheGrownBatch()
+    {
+        var (vm, reader, jev) = Create();
+        var gate = new TaskCompletionSource();
+        jev.Gate = gate;
+        await vm.SetEnabledAsync(true);
+        reader.Raise(InFront());
+
+        reader.Raise(Frame("小明", Me(187, "在"), Them(250, "好")));
+        Advance(1);
+        reader.Raise(new ReaderEvent { Type = ReaderEvent.Scrolling });
+        reader.Raise(Frame("小明", Me(187, "在"), Them(250, "好"), Them(320, "好")));
+        Advance(1);
+
+        Assert.Equal(2, jev.Seen.Count);
+        Assert.Equal(["好", "好"], jev.Seen[1].LatestFromThem);
+
+        // The first answer comes back overtaken and is dropped; the batch's own card is the only one.
+        gate.SetResult();
+        for (int i = 0; i < 100 && vm.Overlay.InlineCards.Any(c => c.IsPending); i++)
+        {
+            await Task.Delay(10);
+        }
+
+        Assert.Equal(111 + 320 - 8, Assert.Single(vm.Overlay.InlineCards).ScreenY);
+    }
+
+    [Fact]
+    public async Task AFailedJudgementIsTriedAgainAfterAMinuteEvenOnAStillScreen()
+    {
+        var (vm, reader, jev) = Create();
+        await vm.SetEnabledAsync(true);
+        reader.Raise(InFront());
+        JevOutcome ok = jev.Next();
+        jev.Next = () => new JevOutcome(null, JevFailure.ServerError, 500);
+
+        reader.Raise(Frame("小明", Me(187, "在"), Them(250, "那你说")));
+        Advance(1);
+        Assert.Single(jev.Seen);
+        Assert.Empty(vm.Overlay.InlineCards);
+
+        // No new frame: the picture has not changed.
+        jev.Next = () => ok;
+        Advance(30);
+        Assert.Single(jev.Seen);
+        Advance(31);
+        Advance(1);
+
+        Assert.Equal(2, jev.Seen.Count);
+        Assert.Single(vm.Overlay.InlineCards);
+    }
+
+    [Fact]
+    public async Task OnceTheUserHasRepliedTheCardNoLongerUrgesAQuickReply()
+    {
+        var (vm, reader, jev) = Create();
+        await vm.SetEnabledAsync(true);
+        reader.Raise(InFront());
+
+        reader.Raise(Frame("小明", Them(250, "那你说")));
+        Advance(1);
+        InlineCardViewModel waiting = Assert.Single(vm.Overlay.InlineCards);
+        Assert.True(waiting.IsExpanded);
+        Assert.Contains("⏱", waiting.Lines[0], StringComparison.Ordinal);
+
+        reader.Raise(new ReaderEvent { Type = ReaderEvent.Scrolling });
+        reader.Raise(Frame("小明", Them(250, "那你说"), Me(320, "我在想")));
+        Advance(1);
+
+        InlineCardViewModel card = Assert.Single(vm.Overlay.InlineCards);
+        // Answered: still the whole judgement, marked as answered, without the urge to reply.
+        Assert.True(card.IsExpanded);
+        Assert.StartsWith("在考验你", card.Headline, StringComparison.Ordinal);
+        Assert.False(card.ReplySoon);
+        Assert.Contains("已回复", card.Lines[0], StringComparison.Ordinal);
+        Assert.DoesNotContain("⏱", card.Lines[0], StringComparison.Ordinal);
+        Assert.Single(jev.Seen);
+    }
+
+    [Fact]
+    public async Task ABatchUnderAnOldStampIsMarkedAsOlder()
+    {
+        var (vm, reader, _) = Create();
+        await vm.SetEnabledAsync(true);
+        reader.Raise(InFront());
+
+        reader.Raise(Frame("小明", Me(150, "晚安"), Stamp(200, "昨天 23:10"), Them(250, "你睡了吗")));
+        Advance(1);
+
+        InlineCardViewModel card = Assert.Single(vm.Overlay.InlineCards);
+        Assert.False(card.ReplySoon);
+        Assert.True(card.IsExpanded);
+        Assert.Contains("较早的消息", card.Lines[0], StringComparison.Ordinal);
+        Assert.DoesNotContain("⏱", card.Lines[0], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ComingBackToAConversationThatMovedOnJudgesWhatIsWaitingThere()
+    {
+        var (vm, reader, jev) = Create();
+        await vm.SetEnabledAsync(true);
+        reader.Raise(InFront());
+
+        reader.Raise(Frame("小明", Me(187, "在"), Them(250, "那你说")));
+        Advance(1);
+        reader.Raise(new ReaderEvent { Type = ReaderEvent.Scrolling });
+        reader.Raise(Frame("小红", Them(250, "周末去哪")));
+        Advance(1);
+
+        // Back to 小明, where more than a screen arrived meanwhile: nothing overlaps what was read.
+        reader.Raise(new ReaderEvent { Type = ReaderEvent.Scrolling });
+        reader.Raise(Frame("小明", Them(187, "后来"), Me(250, "嗯"), Them(320, "又说了"), Them(390, "好多")));
+        Advance(1);
+
+        Assert.Equal(4, jev.Seen.Count);
+        Assert.Contains(jev.Seen, s => s.LatestFromThem.SequenceEqual(["又说了", "好多"]));
+        Assert.Contains(jev.Seen, s => s.LatestFromThem.SequenceEqual(["后来"]));
     }
 
     [Fact]
@@ -223,7 +424,7 @@ public sealed class WeChatIntentViewModelTests : IDisposable
             var (vm, reader, _) = Create();
             await vm.SetEnabledAsync(true);
             reader.Raise(InFront());
-            reader.Raise(Frame("小明", Them(187, "你今天是不是又忘了"), Me(250, "记得"),
+            reader.Raise(Frame("小明", Me(187, "记得"), Them(250, "你今天是不是又忘了"),
                 new ReaderLine { Text = "深色模式的气泡", X = 383, Y = 450, W = 120, H = 13, Bg = [60, 60, 60] }));
             Advance(1);
         }
@@ -233,8 +434,8 @@ public sealed class WeChatIntentViewModelTests : IDisposable
         Assert.Contains("微信窗口：foreground", text, StringComparison.Ordinal);
         Assert.Contains("3 行 → 对方 1、自己 1、时间 0、丢弃 1（丢弃行底色 (60,60,60)×1）", text, StringComparison.Ordinal);
         Assert.Contains("标题 2 字", text, StringComparison.Ordinal);
-        Assert.Contains("待判断 1 条", text, StringComparison.Ordinal);
-        Assert.Contains("发出判断 1 条", text, StringComparison.Ordinal);
+        Assert.Contains("待判断 1 批", text, StringComparison.Ordinal);
+        Assert.Contains("发出判断 1 批，共 1 条", text, StringComparison.Ordinal);
         foreach (string secret in new[] { "小明", "你今天是不是又忘了", "记得", "深色模式的气泡" })
         {
             Assert.DoesNotContain(secret, text, StringComparison.Ordinal);
@@ -261,23 +462,28 @@ public sealed class WeChatIntentViewModelTests : IDisposable
     }
 
     [Fact]
-    public async Task CardsOfMessagesCloseTogetherDoNotOverlap()
+    public async Task CardsOfBatchesCloseTogetherDoNotOverlap()
     {
         var (vm, reader, jev) = Create();
         await vm.SetEnabledAsync(true);
         reader.Raise(InFront());
 
-        reader.Raise(Frame("小明", Them(187, "在吗"), Them(215, "那你说"), Them(243, "你最好是")));
+        reader.Raise(Frame("小明", Them(187, "在吗")));
+        Advance(1);
+        reader.Raise(new ReaderEvent { Type = ReaderEvent.Scrolling });
+        reader.Raise(Frame("小明", Them(187, "在吗"), Me(205, "嗯嗯"), Them(223, "你最好是")));
         Advance(1);
 
-        Assert.Equal(3, jev.Seen.Count);
+        Assert.Equal(2, jev.Seen.Count);
         var cards = vm.Overlay.InlineCards.ToList();
-        Assert.Equal([111 + 187 - 8, 111 + 215 - 8, 111 + 243 - 8], cards.Select(c => c.ScreenY));   // each level with its message
+        Assert.Equal([111 + 187 - 8, 111 + 223 - 8], cards.Select(c => c.ScreenY));   // each level with its message
         foreach (var a in cards)
         {
             foreach (var b in cards.Where(b => !ReferenceEquals(a, b)))
             {
-                bool overlap = a.ScreenX < b.ScreenX + 220 && b.ScreenX < a.ScreenX + 220 && a.ScreenY < b.ScreenY + 44 && b.ScreenY < a.ScreenY + 44;
+                (int aw, int ah) = a.IsExpanded ? (300, 84) : (220, 44);
+                (int bw, int bh) = b.IsExpanded ? (300, 84) : (220, 44);
+                bool overlap = a.ScreenX < b.ScreenX + bw && b.ScreenX < a.ScreenX + aw && a.ScreenY < b.ScreenY + bh && b.ScreenY < a.ScreenY + ah;
                 Assert.False(overlap);
             }
         }

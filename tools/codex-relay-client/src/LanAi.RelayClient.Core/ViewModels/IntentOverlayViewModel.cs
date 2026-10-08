@@ -89,6 +89,15 @@ public sealed class InlineCardViewModel
     /// <summary>Everything, for the tooltip.</summary>
     public string Detail { get; init; } = string.Empty;
 
+    /// <summary>
+    /// A judgement: drawn larger, with <see cref="Lines"/> under the headline, so the whole of it
+    /// is there without hovering. False for the 「分析中」 placeholder.
+    /// </summary>
+    public bool IsExpanded { get; init; }
+
+    /// <summary>When expanded: emotion, risk and advice, one line each.</summary>
+    public IReadOnlyList<string> Lines { get; init; } = [];
+
     public string Stripe => IsPending ? "#9CA3AF" : RiskLevel switch
     {
         >= 4 => "#DC2626",

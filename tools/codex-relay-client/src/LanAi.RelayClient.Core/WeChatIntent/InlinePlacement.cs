@@ -61,18 +61,36 @@ internal static class InlinePlacement
     public static List<(int X, int Y, T Item)> Arrange<T>(IEnumerable<(int X, int Y, T Item)> cards, int width, int height, int gap)
     {
         ArgumentNullException.ThrowIfNull(cards);
-        var placed = new List<(int X, int Y, T Item)>();
-        foreach ((int x0, int y, T item) in cards.OrderBy(c => c.Y))
+        return Arrange(cards.Select(c => (c.X, c.Y, width, height, c.Item)), gap);
+    }
+
+    /// <summary>
+    /// As above, each card with its own size: the card still waiting for a reply is drawn larger
+    /// than the ones of answered batches.
+    /// </summary>
+    public static List<(int X, int Y, T Item)> Arrange<T>(IEnumerable<(int X, int Y, int Width, int Height, T Item)> cards, int gap)
+    {
+        ArgumentNullException.ThrowIfNull(cards);
+        var placed = new List<(int X, int Y, int W, int H, T Item)>();
+        foreach ((int x0, int y, int w, int h, T item) in cards.OrderBy(c => c.Y))
         {
+            // Past the right edge of whatever it overlaps — with cards of different widths, one
+            // card-width to the right can still be on top of a wider card.
             int x = x0;
-            while (placed.Any(o => x < o.X + width + gap && o.X < x + width + gap && y < o.Y + height + gap && o.Y < y + height + gap))
+            while (true)
             {
-                x += width + gap;
+                var blocking = placed.Where(o => x < o.X + o.W + gap && o.X < x + w + gap && y < o.Y + o.H + gap && o.Y < y + h + gap).ToList();
+                if (blocking.Count == 0)
+                {
+                    break;
+                }
+
+                x = blocking.Max(o => o.X + o.W + gap);
             }
 
-            placed.Add((x, y, item));
+            placed.Add((x, y, w, h, item));
         }
 
-        return placed;
+        return placed.Select(p => (p.X, p.Y, p.Item)).ToList();
     }
 }

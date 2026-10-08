@@ -7,8 +7,11 @@ internal sealed record IntentCard
 {
     public string Chat { get; init; } = string.Empty;
 
-    /// <summary>The message judged, shortened, so the card says what it is about.</summary>
+    /// <summary>The last message of the batch judged, shortened, so the card says what it is about.</summary>
     public string About { get; init; } = string.Empty;
+
+    /// <summary>How many of their messages in a row the judgement covered.</summary>
+    public int BatchSize { get; init; } = 1;
 
     /// <summary>E.g. 「在考验你 93% · 想被在乎 5%」.</summary>
     public string Intent { get; init; } = string.Empty;
@@ -67,6 +70,7 @@ internal sealed record IntentCard
         {
             Chat = chat,
             About = about.Length > 16 ? about[..16] + "…" : about,
+            BatchSize = Math.Max(1, latest.Count),
             Intent = TopTwo(intent, WeChatIntentQuestions.IntentLabels),
             IntentUncertain = intent?.Confidence is double c && c < 0.5,
             Emotion = Top(emotion, WeChatIntentQuestions.EmotionLabels),

@@ -26,8 +26,15 @@ public partial class InlineCardWindow : Window
 {
     private const double Resting = 0.78;
 
+    // Must match CardWidth / CardHeight and ExpandedWidth / ExpandedHeight in WeChatIntentViewModel.
+    private const double CompactWidth = 220;
+    private const double CompactHeight = 44;
+    private const double ExpandedWidth = 300;
+    private const double ExpandedHeight = 84;
+
     private readonly TextBlock _headline;
     private readonly TextBlock _advice;
+    private readonly TextBlock[] _lines;
     private readonly Border _stripe;
     private readonly Border _card;
     private readonly MenuItem _right;
@@ -41,6 +48,7 @@ public partial class InlineCardWindow : Window
         AvaloniaXamlLoader.Load(this);
         _headline = this.FindControl<TextBlock>("Headline")!;
         _advice = this.FindControl<TextBlock>("Advice")!;
+        _lines = [this.FindControl<TextBlock>("Line1")!, this.FindControl<TextBlock>("Line2")!, this.FindControl<TextBlock>("Line3")!];
         _stripe = this.FindControl<Border>("Stripe")!;
         _card = this.FindControl<Border>("Card")!;
         _right = this.FindControl<MenuItem>("RightItem")!;
@@ -57,7 +65,18 @@ public partial class InlineCardWindow : Window
         _current = card;
         _headline.Text = card.Headline;
         _advice.Text = card.Advice;
-        _advice.IsVisible = card.Advice.Length > 0;
+
+        // Expanded: the detail lines replace the one-line summary under the headline.
+        _advice.IsVisible = !card.IsExpanded && card.Advice.Length > 0;
+        for (int i = 0; i < _lines.Length; i++)
+        {
+            bool shown = card.IsExpanded && i < card.Lines.Count;
+            _lines[i].Text = shown ? card.Lines[i] : string.Empty;
+            _lines[i].IsVisible = shown;
+        }
+
+        Width = card.IsExpanded ? ExpandedWidth : CompactWidth;
+        Height = card.IsExpanded ? ExpandedHeight : CompactHeight;
         _stripe.Background = new SolidColorBrush(Color.Parse(card.Stripe));
         _right.IsEnabled = _wrong.IsEnabled = !card.IsPending && !card.FeedbackGiven;
         ToolTip.SetTip(_card, card.Detail.Length > 0 ? card.Detail : null);
