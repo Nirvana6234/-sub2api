@@ -44,13 +44,17 @@ client_running() {
 # ---------------------------------------------------------------------------
 # 1. 架构检查
 #
-# v1 只出 arm64。Intel 机器装上去会「安装成功、打开没反应」——必须在下载前就说清楚，
-# 而不是让用户装完再面对一个打不开的图标。
+# 出两个包：arm64（Apple 芯片）与 x64（Intel）。装错的包「安装成功、打开没反应」，
+# 所以在下载前就按机器选好，而不是让用户装完再面对一个打不开的图标。
+#
+# 不能用 uname -m：在 Rosetta 下运行的终端里它会报 x86_64，哪怕机器是 Apple 芯片，
+# 结果是 M 系列用户被送去装 Intel 包。hw.optional.arm64 在 Apple 芯片上输出 1，
+# Intel 机器上这个键不存在、什么也不输出。
 # ---------------------------------------------------------------------------
-arch="$(uname -m)"
-if [ "$arch" != "arm64" ]; then
-    fail "当前是 ${arch} 架构的 Mac（Intel 芯片），本版本只支持 Apple 芯片（M 系列）。
-      装上去会打不开。请联系客服确认 Intel 版本的进展。"
+if [ "$(sysctl -in hw.optional.arm64 2>/dev/null || true)" = "1" ]; then
+    PACKAGE_ARCH="arm64"
+else
+    PACKAGE_ARCH="x64"
 fi
 
 # ---------------------------------------------------------------------------
@@ -100,6 +104,16 @@ resolve_download_url() {
         | cut -d'"' -f4)"
 
     [ -n "${url}" ] || fail "服务端暂未发布 macOS 安装包，请稍后重试或联系客服。"
+
+    # 后台设置项里只有一个 macOS 地址，约定它指向 arm64 包；Intel 的包与它放在同一目录、
+    # 同一个版本号，只有文件名里的架构不同。这里按文件名换过去，不另加一个设置项。
+    if [ "${PACKAGE_ARCH}" = "x64" ]; then
+        local intel="${url/_macos-arm64.tar.gz/_macos-x64.tar.gz}"
+        # 换不动说明地址不是约定的命名；这时不能把 arm64 包交给 Intel 机器。
+        [ "${intel}" != "${url}" ] \
+            || fail "当前是 Intel 芯片的 Mac，但服务端发布的安装包地址（${url}）不是约定的命名，找不到对应的 Intel 版本。请联系客服。"
+        url="${intel}"
+    fi
     printf '%s' "${url}"
 }
 
@@ -111,7 +125,7 @@ trap 'rm -rf "${workdir}"' EXIT
 
 say "正在下载…"
 curl -fSL --progress-bar "${DOWNLOAD_URL}" -o "${workdir}/client.tar.gz" \
-    || fail "下载失败，请检查网络后重试。"
+    || fail "下载失败（${DOWNLOAD_URL}）。请检查网络后重试；Intel 芯片的 Mac 也可能是对应的 Intel 版安装包还没有发布，请联系客服。"
 
 say "正在解压…"
 tar -xzf "${workdir}/client.tar.gz" -C "${workdir}" || fail "安装包损坏，请重新运行本脚本。"

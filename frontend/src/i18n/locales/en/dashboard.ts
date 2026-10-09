@@ -74,7 +74,7 @@ export default {
         title: 'Desktop Assistant',
         description: 'Launch Codex desktop in one click, no setup, and save tokens along the way.',
         windows: 'Windows x64',
-        mac: 'macOS · Apple silicon',
+        mac: 'macOS · Apple silicon / Intel',
         meta: 'Latest v{version}',
         metaPlatforms: 'Latest Windows v{windows} · macOS v{mac}',
         guide: 'Install guide',

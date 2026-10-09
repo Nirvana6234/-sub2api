@@ -5,14 +5,19 @@
 #
 # 产出
 #   codex-relay-client_v<版本>_x64.zip            Windows 单文件，带 context-filter 与微信读屏组件
-#   codex-relay-client_v<版本>_macos-arm64.tar.gz macOS .app（自签名证书签名，带 context-filter 与微信读屏组件）
+#   codex-relay-client_v<版本>_macos-arm64.tar.gz macOS .app，Apple 芯片（自签名证书签名，带 context-filter 与微信读屏组件）
+#   codex-relay-client_v<版本>_macos-x64.tar.gz   macOS .app，Intel 芯片（同上，同一张证书）
 #
 # 微信读屏组件（wechat-reader，「探索」页的微信消息意图判断）是 -p:IncludeWeChatReader=true
 # 才编进去的独立进程，两个包都带。Windows 版是 .NET，随 win-x64 发布一起编；macOS 版是
 # Swift，只能在 Mac 上编译——所以先由 mac-reader 任务在 macOS runner 上编出通用二进制
-# （arm64 + x86_64），再交给这里的 osx-arm64 发布（WeChatReaderMacBinary）。
-# context-filter 的 macOS 版由上游随每个版本发布（darwin-arm64），同一个任务按
-# bundled-context-filter/VERSION 下载、对照上游 SHA256SUMS 校验后一并交过来（ContextFilterMacBinary）。
+# （arm64 + x86_64），再交给这里的 osx-arm64 / osx-x64 两次发布共用（WeChatReaderMacBinary）。
+# context-filter 的 macOS 版由上游随每个版本发布，一个架构一个文件（darwin-arm64 / darwin-amd64），
+# 同一个任务按 bundled-context-filter/VERSION 下载、对照上游 SHA256SUMS 校验后一并交过来
+# （ContextFilterMacBinary，两次发布各取各的）。
+#
+# 两个 macOS 包各用各的目录（pub-mac-<arch>、macos-<arch>）：组装 .app 时会把同名的旧 .app 整个删掉，
+# 共用目录的话第二个包会把第一个抹掉。
 #
 # 为什么整条流水线在 windows-latest（2× 计费）
 # --------------------------------------------
@@ -78,8 +83,9 @@ jobs:
   # macOS 包里的两个辅助程序，在 macOS runner 上准备好再交给 release：
   # - 微信读屏组件：Swift（ScreenCaptureKit + Vision），只能在 Mac 上编译。链接器会给 arm64
   #   产物加 ad-hoc 签名；打进 .app 后下面还会再签一次、再核验。
-  # - context-filter 的 darwin-arm64 版：上游发布物，走下载地址而不是 api.github.com（后者按
-  #   共享的 runner IP 限流），并对照上游 SHA256SUMS 校验。
+  # - context-filter 的 darwin-arm64 / darwin-amd64 版：上游发布物，走下载地址而不是 api.github.com
+  #   （后者按共享的 runner IP 限流），并对照上游 SHA256SUMS 校验。两个架构的文件名带架构后缀、
+  #   平铺在同一个目录里（子目录会被 upload-artifact 按公共上级目录保留层级，见下面「汇总」的说明）。
   mac-reader:
     runs-on: macos-14
     timeout-minutes: 30
@@ -89,21 +95,32 @@ jobs:
       - name: 编译 macOS 微信读屏组件
         run: sh src/LanAi.RelayClient.WeChatReader.Mac/build.sh
 
-      - name: 下载并校验 macOS 版 context-filter
+      - name: 下载并校验 macOS 版 context-filter（arm64 与 amd64）
         run: |
           version=$(tr -d '[:space:]' < bundled-context-filter/VERSION)
           base="https://github.com/LiangMu-Studio/context-filter/releases/download/$version"
           dir="$RUNNER_TEMP/context-filter-mac"
-          mkdir -p "$dir" && cd "$dir"
-          curl -fsSL --retry 3 -o context-filter-darwin-arm64.tar.gz "$base/context-filter-darwin-arm64.tar.gz"
+          mkdir -p "$dir" "$RUNNER_TEMP/mac-helpers"
+          cd "$dir"
           curl -fsSL --retry 3 -o SHA256SUMS "$base/SHA256SUMS"
-          grep ' context-filter-darwin-arm64.tar.gz$' SHA256SUMS | shasum -a 256 -c -
-          tar -xzf context-filter-darwin-arm64.tar.gz
-          found=$(find . -type f -name context-filter | head -n 1)
-          if [ -z "$found" ]; then echo "::error::压缩包里没有 context-filter"; exit 1; fi
-          mkdir -p "$RUNNER_TEMP/mac-helpers"
-          cp "$found" "$RUNNER_TEMP/mac-helpers/context-filter"
-          file "$RUNNER_TEMP/mac-helpers/context-filter"
+          # 上游的架构名（arm64 / amd64）对应 lipo 报的名字（arm64 / x86_64）。
+          for pair in arm64:arm64 amd64:x86_64; do
+            arch="${pair%%:*}"; lipo_arch="${pair##*:}"
+            mkdir -p "$arch"
+            curl -fsSL --retry 3 -o "context-filter-darwin-$arch.tar.gz" "$base/context-filter-darwin-$arch.tar.gz"
+            grep " context-filter-darwin-$arch.tar.gz\$" SHA256SUMS | shasum -a 256 -c -
+            tar -xzf "context-filter-darwin-$arch.tar.gz" -C "$arch"
+            found=$(find "$arch" -type f -name context-filter | head -n 1)
+            if [ -z "$found" ]; then echo "::error::darwin-$arch 的压缩包里没有 context-filter"; exit 1; fi
+            # 上游的文件名与内容对不上时，包会装得上、跑不起来，而且不报错。
+            actual=$(lipo -archs "$found")
+            if [ "$actual" != "$lipo_arch" ]; then
+              echo "::error::context-filter-darwin-$arch 的架构是「$actual」，应当是「$lipo_arch」"
+              exit 1
+            fi
+            cp "$found" "$RUNNER_TEMP/mac-helpers/context-filter-darwin-$arch"
+            file "$RUNNER_TEMP/mac-helpers/context-filter-darwin-$arch"
+          done
 
       # 两个文件放进同一个目录再上传：分处两个根目录时，upload-artifact 会按公共上级目录
       # 保留层级，下载后就不在 release 任务期待的位置了。
@@ -284,15 +301,23 @@ jobs:
       # 原生库（.dylib）照旧单独放，它们是 Mach-O，逐个签名；**不要**加
       # IncludeNativeLibrariesForSelfExtract——那会让它们运行时解压到临时目录、落在签名之外。
       # build-app.py 组装时会核对 Contents/MacOS 里只有 Mach-O。
-      - name: 发布 osx-arm64
+      #
+      # 同一份代码按两个运行时各发布一次：osx-arm64（Apple 芯片）与 osx-x64（Intel）。
+      # context-filter 取各自架构的上游版本（darwin-arm64 / darwin-amd64）；微信读屏组件是通用二进制，共用一份。
+      - name: 发布 osx-arm64 与 osx-x64
         run: |
-          dotnet publish src/LanAi.RelayClient.App/LanAi.RelayClient.App.csproj `
-            -c Release -r osx-arm64 --self-contained true `
-            -p:PublishSingleFile=true -p:DebugType=none `
-            -p:IncludeWeChatReader=true `
-            -p:WeChatReaderMacBinary="${{ runner.temp }}/wechat-reader-mac/wechat-reader" `
-            -p:ContextFilterMacBinary="${{ runner.temp }}/wechat-reader-mac/context-filter" `
-            -o "${{ runner.temp }}/pub-mac"
+          foreach ($pair in @(@('arm64', 'arm64'), @('x64', 'amd64'))) {
+            $arch = $pair[0]
+            $filter = $pair[1]
+            dotnet publish src/LanAi.RelayClient.App/LanAi.RelayClient.App.csproj `
+              -c Release -r "osx-$arch" --self-contained true `
+              -p:PublishSingleFile=true -p:DebugType=none `
+              -p:IncludeWeChatReader=true `
+              -p:WeChatReaderMacBinary="${{ runner.temp }}/wechat-reader-mac/wechat-reader" `
+              -p:ContextFilterMacBinary="${{ runner.temp }}/wechat-reader-mac/context-filter-darwin-$filter" `
+              -o "${{ runner.temp }}/pub-mac-$arch"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
 
       - name: 生成图标
         shell: bash
@@ -304,26 +329,34 @@ jobs:
       #
       # 只组装、不打包：签名要发生在组装与归档之间。归档那一步没有 --allow-unsigned，
       # 所以漏签会在那里被拦下。
-      - name: 组装 .app
+      #
+      # --arch 让 build-app.py 核对主程序、context-filter、微信读屏组件的 Mach-O 架构都与包名一致：
+      # 包名是 Intel 机器选包的唯一依据，名字与内容对不上时包会装得上、打不开，而且没有任何报错。
+      - name: 组装 .app（arm64 与 x64）
         shell: bash
         run: |
-          python packaging/macos/build-app.py \
-            --publish "${{ runner.temp }}/pub-mac" \
-            --out "${{ runner.temp }}/macos" \
-            --assemble-only
+          for arch in arm64 x64; do
+            python packaging/macos/build-app.py \
+              --publish "${{ runner.temp }}/pub-mac-$arch" \
+              --out "${{ runner.temp }}/macos-$arch" \
+              --arch "$arch" \
+              --assemble-only
+          done
 
       # 与 Windows 包同理：少了读屏组件 Mac 上「探索」页签整个不出现，少了 context-filter
       # 「启用上下文压缩」永久置灰，都没有报错。
       - name: .app 必须带上微信读屏组件与 context-filter
         shell: bash
         run: |
-          macos="${{ runner.temp }}/macos/共飞-ChatGPT助手.app/Contents/MacOS"
-          for helper in wechat-reader/wechat-reader context-filter/context-filter; do
-            if [ ! -f "$macos/$helper" ]; then
-              echo "::error::.app 里没有 Contents/MacOS/$helper，拒绝出包"
-              ls -laR "$macos" | head -50
-              exit 1
-            fi
+          for arch in arm64 x64; do
+            macos="${{ runner.temp }}/macos-$arch/共飞-ChatGPT助手.app/Contents/MacOS"
+            for helper in wechat-reader/wechat-reader context-filter/context-filter; do
+              if [ ! -f "$macos/$helper" ]; then
+                echo "::error::$arch 的 .app 里没有 Contents/MacOS/$helper，拒绝出包"
+                ls -laR "$macos" | head -50
+                exit 1
+              fi
+            done
           done
 
       - name: 缓存 rcodesign
@@ -354,7 +387,7 @@ jobs:
           P12_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
           MUST_USE_CERT: ${{ startsWith(github.ref, 'refs/tags/client-v') || inputs.publish_release }}
         run: |
-          app="${{ runner.temp }}/macos/共飞-ChatGPT助手.app"
+          first_app="${{ runner.temp }}/macos-arm64/共飞-ChatGPT助手.app"
           key_dir="$RUNNER_TEMP/macos-signing"
           trap 'rm -rf "$key_dir"' EXIT
           identity=()
@@ -371,7 +404,7 @@ jobs:
             identity=(--p12-file "$key_dir/signing.p12" --p12-password-file "$key_dir/password")
             echo "用固定证书签名"
             # 先单独签一个，打不开证书时说清楚是哪一项不对（只报长度，不报内容）。
-            if ! rcodesign sign "${identity[@]}" "$app/Contents/MacOS/wechat-reader/wechat-reader"; then
+            if ! rcodesign sign "${identity[@]}" "$first_app/Contents/MacOS/wechat-reader/wechat-reader"; then
               echo "::error::签名证书打不开。MACOS_SIGNING_P12_PASSWORD 有 ${#password} 个字符（new-signing-cert.sh 生成的是 32 个），p12 解码后 $(wc -c < "$key_dir/signing.p12") 字节。多半是两个 secret 填反了，或密码与 p12 不是同一次生成的。"
               exit 1
             fi
@@ -385,9 +418,15 @@ jobs:
           # 不在签名里，macOS 上 codesign 会拒绝整个 .app。所以看日志，不只看退出码。
           log="$RUNNER_TEMP/rcodesign.log"
           : > "$log"
-          rcodesign sign "${identity[@]}" "$app/Contents/MacOS/wechat-reader/wechat-reader" 2>&1 | tee -a "$log"
-          rcodesign sign "${identity[@]}" "$app/Contents/MacOS/context-filter/context-filter" 2>&1 | tee -a "$log"
-          rcodesign sign "${identity[@]}" "$app" 2>&1 | tee -a "$log"
+          # 两个包用同一张证书：指定要求只由 Bundle ID 与证书指纹决定，与架构无关，
+          # 所以从 Apple 芯片机器换到 Intel 机器、或反过来，授权都不受影响。
+          for arch in arm64 x64; do
+            app="${{ runner.temp }}/macos-$arch/共飞-ChatGPT助手.app"
+            echo "签名 $arch"
+            rcodesign sign "${identity[@]}" "$app/Contents/MacOS/wechat-reader/wechat-reader" 2>&1 | tee -a "$log"
+            rcodesign sign "${identity[@]}" "$app/Contents/MacOS/context-filter/context-filter" 2>&1 | tee -a "$log"
+            rcodesign sign "${identity[@]}" "$app" 2>&1 | tee -a "$log"
+          done
           if grep -q "non Mach-O file with a nested rule" "$log"; then
             echo "::error::rcodesign 跳过了 Contents/MacOS 下不是可执行文件的内容，这些文件不在签名里："
             grep "non Mach-O file with a nested rule" "$log"
@@ -399,23 +438,25 @@ jobs:
       - name: 核验签名
         shell: bash
         run: |
-          app="${{ runner.temp }}/macos/共飞-ChatGPT助手.app"
-          if [ ! -f "$app/Contents/_CodeSignature/CodeResources" ]; then
-            echo "::error::签名后仍找不到 _CodeSignature/CodeResources"
-            exit 1
-          fi
-          rcodesign print-signature-info "$app/Contents/MacOS/LanAi.RelayClient.App" \
-            || { echo "::error::主可执行文件没有可读的签名"; exit 1; }
-          rcodesign print-signature-info "$app/Contents/MacOS/wechat-reader/wechat-reader" \
-            || { echo "::error::微信读屏组件没有可读的签名"; exit 1; }
-          rcodesign print-signature-info "$app/Contents/MacOS/context-filter/context-filter" \
-            || { echo "::error::context-filter 没有可读的签名"; exit 1; }
-          # 单文件包是主程序后面接着程序集。签名若把尾部截掉，codesign 照样通过，程序却一启动就报
-          # 找不到程序集——所以回头确认程序集清单还在（清单里的名字是 UTF-8）。
-          if ! grep -q "LanAi.RelayClient.Core.dll" "$app/Contents/MacOS/LanAi.RelayClient.App"; then
-            echo "::error::签名后的主程序里找不到打包进去的程序集，单文件的内容被截掉了"
-            exit 1
-          fi
+          for arch in arm64 x64; do
+            app="${{ runner.temp }}/macos-$arch/共飞-ChatGPT助手.app"
+            if [ ! -f "$app/Contents/_CodeSignature/CodeResources" ]; then
+              echo "::error::$arch 签名后仍找不到 _CodeSignature/CodeResources"
+              exit 1
+            fi
+            rcodesign print-signature-info "$app/Contents/MacOS/LanAi.RelayClient.App" \
+              || { echo "::error::$arch 主可执行文件没有可读的签名"; exit 1; }
+            rcodesign print-signature-info "$app/Contents/MacOS/wechat-reader/wechat-reader" \
+              || { echo "::error::$arch 微信读屏组件没有可读的签名"; exit 1; }
+            rcodesign print-signature-info "$app/Contents/MacOS/context-filter/context-filter" \
+              || { echo "::error::$arch context-filter 没有可读的签名"; exit 1; }
+            # 单文件包是主程序后面接着程序集。签名若把尾部截掉，codesign 照样通过，程序却一启动就报
+            # 找不到程序集——所以回头确认程序集清单还在（清单里的名字是 UTF-8）。
+            if ! grep -q "LanAi.RelayClient.Core.dll" "$app/Contents/MacOS/LanAi.RelayClient.App"; then
+              echo "::error::$arch 签名后的主程序里找不到打包进去的程序集，单文件的内容被截掉了"
+              exit 1
+            fi
+          done
 
       # 授权能不能随升级保留，全看主程序的指定要求：必须是 Bundle ID + 仓库里那张证书的指纹。
       # 指纹不对（secret 换成了别的证书）或退回了 cdhash（没用上证书），用户升级后都会被要求重新授权，
@@ -435,27 +476,32 @@ jobs:
             exit 1
           fi
           expected=$(openssl x509 -in "$cert" -noout -fingerprint -sha1 | sed 's/.*=//; s/://g' | tr 'A-F' 'a-f')
-          info=$(rcodesign print-signature-info "${{ runner.temp }}/macos/共飞-ChatGPT助手.app/Contents/MacOS/LanAi.RelayClient.App")
-          designated=$(printf '%s\n' "$info" | grep 'designated' || true)
-          echo "指定要求：$designated"
           want='(identifier "com.gongfeiai.chatgpt-assistant") and (certificate root = H"'"$expected"'")'
-          case "$designated" in
-            *"$want"*) echo "与 signing-cert.pem（$expected）一致" ;;
-            *)
-              echo "::error::主程序的指定要求不是 $want。secret 里的证书与仓库里的 signing-cert.pem 不是同一张？"
-              exit 1
-              ;;
-          esac
+          for arch in arm64 x64; do
+            info=$(rcodesign print-signature-info "${{ runner.temp }}/macos-$arch/共飞-ChatGPT助手.app/Contents/MacOS/LanAi.RelayClient.App")
+            designated=$(printf '%s\n' "$info" | grep 'designated' || true)
+            echo "$arch 指定要求：$designated"
+            case "$designated" in
+              *"$want"*) echo "$arch 与 signing-cert.pem（$expected）一致" ;;
+              *)
+                echo "::error::$arch 主程序的指定要求不是 $want。secret 里的证书与仓库里的 signing-cert.pem 不是同一张？"
+                exit 1
+                ;;
+            esac
+          done
 
       - name: 打包 .tar.gz
         shell: bash
         run: |
-          python packaging/macos/build-app.py \
-            --publish "${{ runner.temp }}/pub-mac" \
-            --out "${{ runner.temp }}/macos" \
-            --archive-only
-          cp "${{ runner.temp }}/macos"/codex-relay-client_v*_macos-arm64.tar.gz \
-             "${{ runner.temp }}/artifacts/"
+          for arch in arm64 x64; do
+            python packaging/macos/build-app.py \
+              --publish "${{ runner.temp }}/pub-mac-$arch" \
+              --out "${{ runner.temp }}/macos-$arch" \
+              --arch "$arch" \
+              --archive-only
+            cp "${{ runner.temp }}/macos-$arch"/codex-relay-client_v*_macos-"$arch".tar.gz \
+               "${{ runner.temp }}/artifacts/"
+          done
 
       # 安装脚本要和包一起发布：它是用户拿到 mac 版的唯一入口，
       # 也是更新入口（客户端不自更新，重跑脚本就是升级）。
@@ -502,28 +548,48 @@ jobs:
         run: |
           cert="$PWD/tools/codex-relay-client/packaging/macos/signing-cert.pem"
           cd "$RUNNER_TEMP/client"
-          tar -xzf codex-relay-client_v*_macos-arm64.tar.gz
-          app="共飞-ChatGPT助手.app"
-          codesign --verify --deep --strict --verbose=2 "$app"
-          for helper in wechat-reader/wechat-reader context-filter/context-filter; do
-            codesign --verify --strict --verbose=2 "$app/Contents/MacOS/$helper"
-          done
-          codesign -dv "$app" 2>&1 | grep -E '^(Identifier|Authority|Signature)=' || true
-          requirement=$(codesign -d -r- "$app" 2>&1)
-          echo "$requirement"
-          # 整段转小写再比：codesign 写的是 H"…"（大写 H），指纹按十六进制也可能大小写不一。
-          # 只认两样——标识符与证书指纹，不依赖 codesign 把它写成 certificate root = 还是 anchor。
-          if [ "$HAS_CERT" = "true" ]; then
-            expected=$(openssl x509 -in "$cert" -noout -fingerprint -sha1 | sed 's/.*=//; s/://g' | tr 'A-Z' 'a-z')
-            designated=$(printf '%s' "$requirement" | grep 'designated' | tr 'A-Z' 'a-z')
-            case "$designated" in
-              *'identifier "com.gongfeiai.chatgpt-assistant"'*"h\"$expected\""*) echo "与 signing-cert.pem（$expected）一致" ;;
-              *)
-                echo "::error::codesign 读出的指定要求里没有 com.gongfeiai.chatgpt-assistant 与 signing-cert.pem 的指纹 $expected"
+          # 两个包里的 .app 同名，各解压到自己的目录。
+          # 这台 runner 是 Apple 芯片，codesign / lipo 都只读文件，不需要能运行 x86_64 程序。
+          for pair in arm64:arm64 x64:x86_64; do
+            arch="${pair%%:*}"; lipo_arch="${pair##*:}"
+            echo "=== $arch ==="
+            mkdir -p "verify-$arch"
+            tar -xzf codex-relay-client_v*_macos-"$arch".tar.gz -C "verify-$arch"
+            app="verify-$arch/共飞-ChatGPT助手.app"
+            codesign --verify --deep --strict --verbose=2 "$app"
+            for helper in wechat-reader/wechat-reader context-filter/context-filter; do
+              codesign --verify --strict --verbose=2 "$app/Contents/MacOS/$helper"
+            done
+            # 包名是 Intel 机器选包的唯一依据：架构与名字对不上的包装得上、打不开，且没有任何报错。
+            # 主程序与 context-filter 必须正好是这一种架构；读屏组件是通用二进制，只需要包含它。
+            for bin in LanAi.RelayClient.App context-filter/context-filter; do
+              actual=$(lipo -archs "$app/Contents/MacOS/$bin")
+              if [ "$actual" != "$lipo_arch" ]; then
+                echo "::error::$arch 包里的 $bin 架构是「$actual」，应当是「$lipo_arch」"
                 exit 1
-                ;;
-            esac
-          fi
+              fi
+            done
+            if ! lipo -archs "$app/Contents/MacOS/wechat-reader/wechat-reader" | tr ' ' '\n' | grep -qx "$lipo_arch"; then
+              echo "::error::$arch 包里的微信读屏组件不含 $lipo_arch"
+              exit 1
+            fi
+            codesign -dv "$app" 2>&1 | grep -E '^(Identifier|Authority|Signature)=' || true
+            requirement=$(codesign -d -r- "$app" 2>&1)
+            echo "$requirement"
+            # 整段转小写再比：codesign 写的是 H"…"（大写 H），指纹按十六进制也可能大小写不一。
+            # 只认两样——标识符与证书指纹，不依赖 codesign 把它写成 certificate root = 还是 anchor。
+            if [ "$HAS_CERT" = "true" ]; then
+              expected=$(openssl x509 -in "$cert" -noout -fingerprint -sha1 | sed 's/.*=//; s/://g' | tr 'A-Z' 'a-z')
+              designated=$(printf '%s' "$requirement" | grep 'designated' | tr 'A-Z' 'a-z')
+              case "$designated" in
+                *'identifier "com.gongfeiai.chatgpt-assistant"'*"h\"$expected\""*) echo "$arch 与 signing-cert.pem（$expected）一致" ;;
+                *)
+                  echo "::error::$arch 包 codesign 读出的指定要求里没有 com.gongfeiai.chatgpt-assistant 与 signing-cert.pem 的指纹 $expected"
+                  exit 1
+                  ;;
+              esac
+            fi
+          done
 
   # -------------------------------------------------------------------
   # GitHub Release
@@ -553,11 +619,15 @@ jobs:
 
             **Windows**：下载 `codex-relay-client_v${{ needs.release.outputs.version }}_x64.zip`，解压后运行。
 
-            **macOS（Apple 芯片）**：终端里执行
+            **macOS（Apple 芯片与 Intel 芯片）**：终端里执行
 
             ```
             curl -fsSL https://gongfeiai.com/install-mac.sh | bash
             ```
+
+            脚本按这台 Mac 的芯片自动选包：Apple 芯片用 `codex-relay-client_v${{ needs.release.outputs.version }}_macos-arm64.tar.gz`，
+            Intel 用 `codex-relay-client_v${{ needs.release.outputs.version }}_macos-x64.tar.gz`。**两个包要上传到同一个目录**，
+            后台「macOS 下载地址」仍填 arm64 包的地址，Intel 的地址由脚本按文件名推出来。
 
             重跑这条命令即可升级。卸载用 `uninstall-mac.sh`。
 

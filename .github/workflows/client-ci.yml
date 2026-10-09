@@ -99,6 +99,19 @@ jobs:
             exit 1
           }
 
+      # Intel 版与 Apple 芯片版是同一份代码、不同运行时：裁剪的结果按运行时各算一遍，
+      # 所以两个都要在 CI 里发一次，而不是假设「arm64 过了 x64 也过」。
+      - name: 裁剪发布 osx-x64
+        run: |
+          dotnet publish src/LanAi.RelayClient.App/LanAi.RelayClient.App.csproj `
+            -c Release -r osx-x64 --self-contained true `
+            -o "${{ runner.temp }}/pub-mac-x64" 2>&1 | Tee-Object -Variable output
+          $offenders = $output | Select-String 'warning|error'
+          if ($offenders) {
+            Write-Error "osx-x64 发布应当零警告：`n$($offenders -join "`n")"
+            exit 1
+          }
+
       # 图标是生成物。脚本重跑后若与仓库里的不一致，说明有人改了源图却没重新生成，
       # 而这个不一致在 macOS 上的症状是「图标变成通用应用图标」，没有任何报错。
       - name: 图标资源是最新的

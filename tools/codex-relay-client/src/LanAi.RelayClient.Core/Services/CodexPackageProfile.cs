@@ -103,10 +103,10 @@ internal sealed record CodexPackageProfile(
             (CodexHostPlatform.MacOS, Architecture.Arm64) =>
                 new("mac-arm64", "ChatGPT-macOS-arm64.dmg", MacExtensions),
 
-            // Intel Macs. The client itself ships arm64-only for v1, so this is
-            // reachable only from an x64 build of the client — but the mirror
-            // publishes the download, and sending an Intel Mac an Apple Silicon
-            // package would be the same wrong-file bug in the other direction.
+            // Intel Macs, reached from the osx-x64 build of the client. The mirror
+            // publishes a separate download for them, and sending an Intel Mac an
+            // Apple Silicon package would be the same wrong-file bug in the other
+            // direction.
             (CodexHostPlatform.MacOS, Architecture.X64) =>
                 new("mac-intel", "ChatGPT-macOS-intel.dmg", MacExtensions),
 

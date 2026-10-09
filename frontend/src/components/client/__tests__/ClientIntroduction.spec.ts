@@ -74,9 +74,11 @@ describe('ClientIntroduction', () => {
     expect(render().text()).not.toContain('Apple 芯片')
   })
 
-  it('shows Apple silicon support and Intel exclusion only when Mac is available', () => {
+  it('shows Apple silicon and Intel support only when Mac is available', () => {
     appStore.cachedPublicSettings.client_download_direct_url_mac = 'https://example.com/mac.tar.gz'
-    expect(render().get('#requirements').text()).toContain('目前支持 Apple 芯片（M 系列），暂不支持 Intel Mac')
+    const requirements = render().get('#requirements').text()
+    expect(requirements).toContain('支持 Apple 芯片（M 系列）和 Intel 芯片')
+    expect(requirements).not.toContain('暂不支持 Intel')
   })
 
   it('also renders the introduction and examples in English', async () => {

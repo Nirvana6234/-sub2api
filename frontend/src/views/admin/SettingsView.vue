@@ -7436,7 +7436,7 @@
                   class="input mt-2"
                 />
                 <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                  {{ localText('留空表示尚未发布 mac 版，下载页不显示 macOS 区块。地址请用不带版本号的固定名，安装脚本同时是升级器，必须始终取到最新包。', 'Leave empty while no macOS build is published. Use a URL without a version number: the install script doubles as the updater and must always fetch the newest package.') }}
+                  {{ localText('留空表示尚未发布 mac 版，下载页不显示 macOS 区块。这里填 Apple 芯片（arm64）包的地址，文件名必须以 _macos-arm64.tar.gz 结尾；Intel 机器的安装脚本会把它换成同目录下的 _macos-x64.tar.gz，所以两个包要上传到同一个目录、同一个版本，且先传完再改这里。', 'Leave empty while no macOS build is published. Enter the Apple silicon (arm64) package URL; the file name must end in _macos-arm64.tar.gz. On Intel Macs the install script swaps it for _macos-x64.tar.gz in the same directory, so upload both packages to one directory at the same version, and finish uploading before changing this field.') }}
                 </p>
               </div>
               <div class="grid gap-4 sm:grid-cols-2">

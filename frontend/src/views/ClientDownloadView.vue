@@ -88,8 +88,10 @@ const macFileName = computed(() => {
   return /\.tar\.gz$/i.test(name) ? name : ''
 })
 
-// 共飞 Mac 版仅发布了 Apple 芯片版本，因此只提供配套的 Codex 下载。
+// 共飞 Mac 版有 Apple 芯片与 Intel 两个包（安装脚本按机器自动选），配套的 Codex 也分两个下载。
+// 路径名与客户端里 CodexPackageProfile 的 MirrorPath 一致。
 const codexMacDownloadUrl = 'https://codexapp.agentsmirror.com/latest/mac-arm64'
+const codexMacIntelDownloadUrl = 'https://codexapp.agentsmirror.com/latest/mac-intel'
 
 const macCommandCopied = ref(false)
 
@@ -138,7 +140,7 @@ const guideSteps: GuideStep[] = [
     ],
     images: [{ src: '/client-guide/g1.png', alt: '双击打开共飞 AI 客户端' }],
     note: '两个客户端缺一不可：共飞客户端管账号、分组和余额，Codex 客户端才是实际对话的程序。',
-    macNote: '请忽略上面的下载解压步骤，改用上方 macOS 下载区的安装命令。它会自动下载、安装到「应用程序」并启动，不需要解压。然后下载配套的 Apple 芯片版 Codex。'
+    macNote: '请忽略上面的下载解压步骤，改用上方 macOS 下载区的安装命令。它会自动下载、安装到「应用程序」并启动，不需要解压。然后按你的芯片（Apple 芯片或 Intel）下载配套的 Codex。'
   },
   {
     number: 2,
@@ -380,8 +382,8 @@ function toggleTheme() {
 
           <section v-if="macDownloadUrl" aria-labelledby="mac-title" class="min-w-0 rounded-3xl border border-gray-200 bg-white p-5 sm:p-7 dark:border-dark-800 dark:bg-dark-900">
             <p class="text-sm font-medium text-primary-700 dark:text-primary-300">苹果电脑 · macOS</p>
-            <h3 id="mac-title" class="mt-2 text-xl font-bold">Apple 芯片（M 系列）</h3>
-            <p class="mt-2 text-sm leading-7 text-gray-600 dark:text-dark-300">先点左上角苹果菜单 →「关于本机」，确认芯片名称以 Apple M 开头。<strong class="text-gray-900 dark:text-white">Intel Mac 暂不支持。</strong></p>
+            <h3 id="mac-title" class="mt-2 text-xl font-bold">Apple 芯片（M 系列）与 Intel 芯片</h3>
+            <p class="mt-2 text-sm leading-7 text-gray-600 dark:text-dark-300">先点左上角苹果菜单 →「关于本机」，看「芯片」或「处理器」一栏：以 Apple M 开头是 Apple 芯片，写着 Intel 的是 Intel 芯片。<strong class="text-gray-900 dark:text-white">两种芯片用同一条安装命令，会自动选对安装包；只有下面的 Codex 需要按芯片分别下载。</strong></p>
             <div class="mt-5">
               <p class="text-sm font-semibold">① 安装共飞：把下面的命令粘贴到「终端」</p>
               <ol class="mt-2 list-decimal space-y-1 pl-5 text-sm leading-7 text-gray-600 dark:text-dark-300">
@@ -394,16 +396,23 @@ function toggleTheme() {
                 <Icon :name="macCommandCopied ? 'check' : 'clipboard'" size="sm" />
                 <span aria-live="polite">{{ macCommandCopied ? '已复制' : '复制命令' }}</span>
               </button>
-              <p v-if="macFileName" class="mt-2 break-all text-xs leading-5 text-gray-500 dark:text-dark-400">安装包：{{ macFileName }}</p>
+              <p v-if="macFileName" class="mt-2 break-all text-xs leading-5 text-gray-500 dark:text-dark-400">安装包：{{ macFileName }}（Intel 芯片的 Mac 会自动改用同目录下对应的 macos-x64 包）</p>
               <p class="mt-2 text-sm leading-6 text-gray-600 dark:text-dark-300">共飞 Mac 版尚未经过苹果公证，请使用上面的安装命令。浏览器直接下载的文件可能被系统拦截。</p>
             </div>
             <div class="mt-5 border-t border-gray-100 pt-4 dark:border-dark-800">
               <p class="mb-2 text-sm font-semibold">② 下载 Codex：用来提问和看回答</p>
-              <a :href="codexMacDownloadUrl" target="_blank" rel="noopener noreferrer" class="btn btn-primary flex min-h-12 w-full items-center justify-center gap-2 px-4 py-3 text-base">
-                <Icon name="download" size="sm" />
-                下载 Codex（Apple 芯片）
-                <Icon name="externalLink" size="sm" />
-              </a>
+              <div class="grid gap-3 sm:grid-cols-2">
+                <a :href="codexMacDownloadUrl" target="_blank" rel="noopener noreferrer" class="btn btn-primary flex min-h-12 w-full items-center justify-center gap-2 px-4 py-3 text-base">
+                  <Icon name="download" size="sm" />
+                  下载 Codex（Apple 芯片）
+                  <Icon name="externalLink" size="sm" />
+                </a>
+                <a :href="codexMacIntelDownloadUrl" target="_blank" rel="noopener noreferrer" class="btn btn-secondary flex min-h-12 w-full items-center justify-center gap-2 px-4 py-3 text-base">
+                  <Icon name="download" size="sm" />
+                  下载 Codex（Intel 芯片）
+                  <Icon name="externalLink" size="sm" />
+                </a>
+              </div>
             </div>
           </section>
         </div>
@@ -526,7 +535,7 @@ function toggleTheme() {
             <h2 class="text-xl font-semibold text-gray-900 dark:text-white">注意事项</h2>
             <ul class="mt-4 list-disc space-y-2 pl-5 text-sm leading-6 text-gray-600 dark:text-dark-300">
               <li v-if="!macDownloadUrl">仅支持 Windows x64，请不要直接移动或删除版本目录内的依赖文件和快捷方式脚本。</li>
-              <li v-else>Windows 版请不要直接移动或删除版本目录内的依赖文件和快捷方式脚本；macOS 版仅支持 Apple 芯片（M 系列），Intel Mac 暂未发布。</li>
+              <li v-else>Windows 版请不要直接移动或删除版本目录内的依赖文件和快捷方式脚本；macOS 版支持 Apple 芯片（M 系列）与 Intel 芯片。</li>
               <li>客户端和 ChatGPT 需要能够访问服务端，网络、代理或 DNS 异常可能导致登录、刷新或支付失败。</li>
               <li>客户端不是 ChatGPT 官方客户端，账号、软件许可和使用规则以 ChatGPT 官方规定为准。</li>
               <li>支付前请核对金额和收款页面信息，不要重复打开多个支付窗口。</li>
@@ -571,8 +580,8 @@ function toggleTheme() {
                 <p class="mt-1 text-sm leading-6 text-gray-600 dark:text-dark-300">检查网络连接和系统时间；仍无法解决时，通过客户端“联系我们”反馈订单号和问题时间。</p>
               </div>
               <div v-if="macDownloadUrl">
-                <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Mac 安装命令提示"当前是 Intel 芯片，本版本只支持 Apple 芯片"？</h3>
-                <p class="mt-1 text-sm leading-6 text-gray-600 dark:text-dark-300">目前只发布了 Apple 芯片（M 系列）版本。可在左上角苹果菜单 →「关于本机」确认芯片型号；Intel Mac 暂不支持，请联系客服了解进展。</p>
+                <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Intel 芯片的 Mac 运行安装命令提示下载失败？</h3>
+                <p class="mt-1 text-sm leading-6 text-gray-600 dark:text-dark-300">Intel 芯片的 Mac 会下载 Intel 版安装包。提示下载失败时，多半是这个版本的 Intel 安装包还没有发布到下载服务器，请联系客服。可在左上角苹果菜单 →「关于本机」确认芯片型号。</p>
               </div>
             </div>
           </section>

@@ -24,6 +24,10 @@ Usage (three steps, because signing happens between assembly and archiving):
     python build-app.py --publish <dir> --out <dir> --assemble-only
     rcodesign sign "<out>/共飞-ChatGPT助手.app"
     python build-app.py --publish <dir> --out <dir> --archive-only
+
+Two packages come out of the same script: --arch arm64 (default, Apple Silicon) and --arch x64
+(Intel). They hold an .app of the same name, so each architecture needs its own --out directory
+-- assembly replaces the .app outright.
 """
 
 import argparse
@@ -65,6 +69,15 @@ MACHO_MAGICS = {
     bytes.fromhex("cefaedfe"), bytes.fromhex("feedface"),
     bytes.fromhex("cafebabe"), bytes.fromhex("cafebabf"),
 }
+
+# Mach-O cputype, per --arch. The main executable and context-filter ship as one thin binary per
+# architecture; wechat-reader is a universal binary (arm64 + x86_64), so it only has to contain
+# the architecture of the package it sits in.
+ARCH_CPU_TYPES = {
+    "arm64": 0x0100000C,
+    "x64": 0x01000007,
+}
+ARCH_RUNTIME_IDS = {"arm64": "osx-arm64", "x64": "osx-x64"}
 
 # Helper executables with no suffix, found anywhere under Contents/MacOS. wechat-reader is the Swift
 # screen reader for 微信消息意图判断, present only in packages built with -p:IncludeWeChatReader=true;
@@ -185,13 +198,80 @@ def check_only_code_in_macos(macos):
             "  and keep non-code content out of the publish directory for osx.")
 
 
+def macho_cpu_types(path):
+    """The cputypes a Mach-O file carries: one for a thin 64-bit file, several for a fat one.
+
+    None when the file is neither (a script, a 32-bit binary, anything unreadable).
+    """
+    with open(path, "rb") as handle:
+        header = handle.read(8)
+        if len(header) < 8:
+            return None
+        if header[:4] == bytes.fromhex("cffaedfe"):
+            return {int.from_bytes(header[4:8], "little")}
+        if header[:4] == bytes.fromhex("cafebabe"):
+            count = int.from_bytes(header[4:8], "big")
+            if not 0 < count <= 8:
+                return None
+            types = set()
+            for _ in range(count):
+                entry = handle.read(20)
+                if len(entry) < 20:
+                    return None
+                types.add(int.from_bytes(entry[:4], "big"))
+            return types
+    return None
+
+
+def describe_cpu_types(types):
+    if types is None:
+        return "not a 64-bit Mach-O"
+    return ", ".join(f"0x{t:08x}" for t in sorted(types))
+
+
+def check_architecture(app, executable, arch):
+    """Refuses a bundle whose binaries are not built for the architecture it is named after.
+
+    The archive name is the only thing telling an Intel Mac which package to take, and nothing
+    on this side shows when the two disagree: a wrong pairing installs cleanly and then does not
+    open. So the files' own headers are the authority, not the --publish directory they came from.
+    """
+    expected = ARCH_CPU_TYPES[arch]
+    macos = app / "Contents" / "MacOS"
+
+    # Exactly the architecture, so a fat main executable (the publish step changed) is refused.
+    main = macos / executable
+    actual = macho_cpu_types(main)
+    if actual != {expected}:
+        raise SystemExit(
+            f"{main.name} is {describe_cpu_types(actual)}, but --arch {arch} needs exactly "
+            f"0x{expected:08x}.\n"
+            f"    Publish with -r {ARCH_RUNTIME_IDS[arch]} for this package.")
+
+    # context-filter is optional here (a package without it greys the switch out), but when it is
+    # present it has to be this architecture's build -- upstream publishes one per architecture.
+    # wechat-reader is universal, so it only has to include this one.
+    for name, exact in (("context-filter", True), ("wechat-reader", False)):
+        for path in sorted(macos.rglob(name)):
+            if not path.is_file():
+                continue
+            types = macho_cpu_types(path)
+            ok = types == {expected} if exact else types is not None and expected in types
+            if not ok:
+                raise SystemExit(
+                    f"{path.relative_to(macos).as_posix()} is {describe_cpu_types(types)}, "
+                    f"which does not match --arch {arch} (0x{expected:08x}).")
+
+    print(f"  architecture ok: {arch}")
+
+
 def is_signed(app):
     """Whether rcodesign (or codesign) has been over this bundle."""
     return (app / "Contents" / "_CodeSignature" / "CodeResources").is_file()
 
 
-def archive(app, out_dir, version, executable):
-    target = out_dir / f"codex-relay-client_v{version}_macos-arm64.tar.gz"
+def archive(app, out_dir, version, executable, arch):
+    target = out_dir / f"codex-relay-client_v{version}_macos-{arch}.tar.gz"
     if target.exists():
         target.unlink()
 
@@ -263,6 +343,8 @@ def main():
     parser.add_argument("--publish", required=True, type=Path)
     parser.add_argument("--out", type=Path, default=CLIENT_ROOT / "artifacts" / "macos")
     parser.add_argument("--version")
+    parser.add_argument("--arch", choices=sorted(ARCH_CPU_TYPES), default="arm64",
+                        help="architecture of the publish output; names the archive")
     parser.add_argument("--assemble-only", action="store_true",
                         help="build the bundle and stop, so it can be signed before archiving")
     parser.add_argument("--archive-only", action="store_true",
@@ -288,6 +370,8 @@ def main():
             raise SystemExit(f"{args.publish} is not a directory")
         app, executable = assemble(args.publish, args.out, version)
 
+    check_architecture(app, executable, args.arch)
+
     if args.assemble_only:
         # Deliberately before the signature gate: this mode exists precisely to
         # produce the unsigned bundle that `rcodesign sign` is about to operate on.
@@ -309,7 +393,7 @@ def main():
             "  (--allow-unsigned skips this, for inspecting the layout only.)"
         )
 
-    target = archive(app, args.out, version, executable)
+    target = archive(app, args.out, version, executable, args.arch)
     verify_archive(target, executable)
 
 

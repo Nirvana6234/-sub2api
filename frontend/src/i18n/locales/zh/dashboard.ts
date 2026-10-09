@@ -74,7 +74,7 @@ export default {
         title: '共飞助手客户端',
         description: '一键启动 Codex 桌面版，免配置，还能帮你节省 Token。',
         windows: 'Windows 64 位',
-        mac: 'macOS · Apple 芯片',
+        mac: 'macOS · Apple 芯片 / Intel',
         meta: '最新版 v{version}',
         metaPlatforms: '最新版 Windows v{windows} · macOS v{mac}',
         guide: '安装教程',

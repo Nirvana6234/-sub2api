@@ -172,9 +172,11 @@
     </ItemGroup>
   </Target>
 
-  <!-- The macOS build of the same filter (upstream publishes darwin-arm64 with every release).
-       Nothing is downloaded here: the release workflow fetches it on its macOS runner, checks
-       it against upstream's SHA256SUMS, and passes it in as ContextFilterMacBinary. Without one
+  <!-- The macOS build of the same filter (upstream publishes darwin-arm64 and darwin-amd64 with
+       every release, one thin binary each). Nothing is downloaded here: the release workflow
+       fetches them on its macOS runner, checks them against upstream's SHA256SUMS, and passes
+       the one matching the RuntimeIdentifier in as ContextFilterMacBinary — osx-arm64 gets the
+       arm64 file, osx-x64 the amd64 one; build-app.py refuses a mismatch. Without one
        the .app simply has no filter, and the client greys out 「启用上下文压缩」 as before. It lands
        in Contents/MacOS/context-filter/, where App.axaml.cs looks, and build-app.py marks it
        executable. -->

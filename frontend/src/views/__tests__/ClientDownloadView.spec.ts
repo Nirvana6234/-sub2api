@@ -206,13 +206,23 @@ describe('ClientDownloadView', () => {
       expect(wrapper.text()).toContain('不需要额外注册快捷方式')
     })
 
-    it('adds the Intel-chip FAQ entry matching the real install script rejection message', () => {
+    it('offers both Codex downloads and no longer says Intel is unsupported', () => {
       const wrapper = mountDownloadPage()
 
-      expect(wrapper.text()).toContain('当前是 Intel 芯片，本版本只支持 Apple 芯片')
-      expect(wrapper.get('#downloads').text()).toContain('Intel Mac 暂不支持')
-      expect(wrapper.find('a[href$="mac-intel"]').exists()).toBe(false)
-      expect(wrapper.get('a[href$="mac-arm64"]').text()).toContain('Codex')
+      expect(wrapper.get('#mac-title').text()).toContain('Intel')
+      expect(wrapper.get('#downloads').text()).not.toContain('Intel Mac 暂不支持')
+      expect(wrapper.text()).not.toContain('Intel Mac 暂未发布')
+      expect(wrapper.get('a[href$="mac-arm64"]').text()).toContain('Apple 芯片')
+      expect(wrapper.get('a[href$="mac-intel"]').text()).toContain('Intel 芯片')
+      // 一条命令两种芯片：命令里不出现架构，脚本自己选包。
+      expect(wrapper.text()).toContain('curl -fsSL https://download.example.com/downloads/install-mac.sh | bash')
+    })
+
+    it('has an FAQ entry for an Intel Mac whose install command fails to download', () => {
+      const wrapper = mountDownloadPage()
+
+      expect(wrapper.text()).toContain('Intel 芯片的 Mac 运行安装命令提示下载失败')
+      expect(wrapper.text()).toContain('Intel 安装包还没有发布')
     })
 
     it('copies the configured Mac install command', async () => {

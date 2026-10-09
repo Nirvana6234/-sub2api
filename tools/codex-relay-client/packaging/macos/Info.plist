@@ -27,7 +27,8 @@
      LaunchAgent 那边不受影响：它用 Environment.ProcessPath 自解析，不写死名字。
 
   4. LSMinimumSystemVersion 定在 12.0：低于此版本的 Apple Silicon 机器
-     基本不存在，而 v1 只出 osx-arm64。
+     基本不存在。osx-arm64 与 osx-x64（Intel）两个包共用这个 plist，所以 12.0 对 Intel 包同样生效：
+     停在 macOS 11 及更早的 Intel 机器会被系统拒绝打开，这是有意取的下限，不是遗漏。
 
   5. 没有 LSUIElement。客户端有主窗口，不是纯菜单栏应用；
      设成 true 会让 Dock 图标消失，小白将无法把窗口找回来。
