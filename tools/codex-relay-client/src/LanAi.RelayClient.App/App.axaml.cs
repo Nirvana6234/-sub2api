@@ -387,6 +387,12 @@ public partial class App : Application
         dashboard.ConfirmModelListRestart = message =>
             ConfirmDialog.AskAsync(shell, message, confirmLabel: "立即重启", cancelLabel: "等待");
 
+        // A switch picked in the dropdown starts only once the dropdown has closed and the
+        // dispatcher has nothing more urgent: a modal opened under a closing popup took the
+        // whole client down on macOS.
+        dashboard.DeferUntilUiIdle = () =>
+            Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(static () => { }, Avalonia.Threading.DispatcherPriority.Background).GetTask();
+
         clientUpdate.ConfirmUpdate = message => ConfirmDialog.AskAsync(shell, message, confirmLabel: "更新");
         clientUpdate.ShowMessage = message => NoticeDialog.ShowNoticeAsync(shell, message);
         clientUpdate.RestartForUpdate = async () =>

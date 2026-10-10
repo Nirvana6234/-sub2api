@@ -97,6 +97,68 @@ public sealed class DashboardCodexModelListTests
         Assert.Null(codex.ActiveGroupModels[^1]);
     }
 
+    // ---- A Claude group without a whitelist (every Claude group in production, 2026-10-09) ----
+
+    private static readonly RelayGroup ClaudeNoListGroup = Group(5, "ClaudeNoList", "anthropic");
+
+    private static async Task<(DashboardViewModel Dashboard, FakeCodexStartup Codex)> BuildNoListAsync()
+    {
+        var relay = new FakeRelayClient();
+        var session = new RelaySessionManager(relay, new FakeSessionStore(), "https://relay.test/", new TestClock().Read);
+        var codex = new FakeCodexStartup { UsesLocalTransport = true };
+        var preferences = new FakeGroupPreferenceStore();
+        preferences.Save(ClaudeNoListGroup.Id);
+        var dashboard = new DashboardViewModel(
+            relay, session, preferences, new ManagedKeyNaming(new FixedInstallId("testinst")), codex);
+        await session.SignInAsync("a@b.com", "pw");
+        relay.OnAvailableGroups = () => [ClaudeNoListGroup, PlainGroup];
+        relay.OnListKeys = () => [];
+        await dashboard.RefreshAsync();
+        return (dashboard, codex);
+    }
+
+    [Fact]
+    public async Task AClaudeGroupWithoutAWhitelistIsPinnedToTheModelChosenOnThePage()
+    {
+        // Measured as 「切不动」: the choice reached Codex only through config.toml at start-up,
+        // and the server-side preference meant to route it is not deployed. The relay now sends
+        // every request to the chosen model.
+        (DashboardViewModel dashboard, FakeCodexStartup codex) = await BuildNoListAsync();
+
+        CodexGroupModels pinned = codex.ActiveGroupModels[^1]!;
+        Assert.True(pinned.IsPinned);
+        Assert.Equal(["claude-sonnet-5"], pinned.Models);
+    }
+
+    [Fact]
+    public async Task ChangingTheModelOfAClaudeGroupWithoutAWhitelistReachesTheRelayAtOnce()
+    {
+        (DashboardViewModel dashboard, FakeCodexStartup codex) = await BuildNoListAsync();
+        int before = codex.ActiveGroupModels.Count;
+
+        dashboard.CodexModelChoice = "claude-opus-5";
+
+        Assert.True(codex.ActiveGroupModels.Count > before);
+        Assert.Equal(5, codex.ActiveGroups[^1]);
+        Assert.Equal(["claude-opus-5"], codex.ActiveGroupModels[^1]!.Models);
+        Assert.Equal("claude-opus-5", dashboard.CodexModelChoice);
+
+        await dashboard.StartCodexAsync(_ => Task.FromResult(false));
+        Assert.Equal("claude-opus-5", codex.LastPreferredModel);
+        Assert.Equal(["claude-opus-5"], codex.LastGroupModels!.Models);
+    }
+
+    [Fact]
+    public async Task ANonClaudeGroupWithoutAWhitelistIsStillLeftOnCodexsOwnList()
+    {
+        (DashboardViewModel dashboard, FakeCodexStartup codex) = await BuildNoListAsync();
+
+        await dashboard.SwitchGroupAsync(Item(dashboard, PlainGroup.Id));
+
+        Assert.Equal(PlainGroup.Id, codex.ActiveGroups[^1]);
+        Assert.Null(codex.ActiveGroupModels[^1]);
+    }
+
     // ---- What starting Codex passes on ------------------------------------------
 
     [Fact]
@@ -458,5 +520,71 @@ public sealed class DashboardCodexModelListTests
         Assert.Equal(["claude-opus-5"], codex.LastGroupModels!.Models);
         Assert.Equal(["claude-opus-5"], dashboard.CodexModelChoices);
         Assert.Contains("claude-*", dashboard.Groups.Single(g => g.Id == 9).AllowedModels);
+    }
+
+    // ---- Picking in the dropdown ---------------------------------------------------------
+
+    private static async Task WaitUntil(Func<bool> condition)
+    {
+        for (int i = 0; i < 200 && !condition(); i++)
+        {
+            await Task.Delay(10);
+        }
+    }
+
+    [Fact]
+    public async Task APickInTheDropdownSwitchesOnlyOnceTheDropdownIsDone()
+    {
+        // On macOS repeated switching made the client vanish: with Codex running, the restart
+        // question opened as a modal inside the dropdown's own selection callback.
+        (DashboardViewModel dashboard, FakeCodexStartup codex, List<string> asked) = await AskingOnAsync(2, answer: false);
+        var idle = new TaskCompletionSource();
+        dashboard.DeferUntilUiIdle = () => idle.Task;
+
+        dashboard.SelectedGroup = Item(dashboard, 1);
+
+        Assert.Empty(asked);
+        Assert.NotEqual(1, codex.ActiveGroups[^1]);
+
+        idle.SetResult();
+        await WaitUntil(() => asked.Count > 0);
+
+        Assert.Single(asked);
+        Assert.Equal(1, codex.ActiveGroups[^1]);
+    }
+
+    [Fact]
+    public async Task PicksMadeWhileASwitchRunsWaitForItAndOnlyTheLastIsApplied()
+    {
+        (DashboardViewModel dashboard, FakeCodexStartup codex) = await BuildAsync(startOn: 2);
+        dashboard.IsCodexRunning = true;
+        dashboard.DeferUntilUiIdle = () => Task.CompletedTask;
+        var answers = new Queue<TaskCompletionSource<bool>>();
+        var asked = new List<string>();
+        dashboard.ConfirmModelListRestart = message =>
+        {
+            asked.Add(message);
+            var answer = new TaskCompletionSource<bool>();
+            answers.Enqueue(answer);
+            return answer.Task;
+        };
+
+        dashboard.SelectedGroup = Item(dashboard, 1);          // Claude: its question stays open
+        await WaitUntil(() => asked.Count == 1);
+        dashboard.SelectedGroup = Item(dashboard, 3);          // picked while that switch runs…
+        dashboard.SelectedGroup = Item(dashboard, 4);          // …and changed again
+
+        Assert.Single(asked);                                   // no second question alongside the first
+        Assert.DoesNotContain((long?)3, codex.ActiveGroups);
+
+        answers.Dequeue().SetResult(false);
+        await WaitUntil(() => codex.ActiveGroups[^1] == 4);
+
+        Assert.Equal(4, codex.ActiveGroups[^1]);
+        Assert.DoesNotContain((long?)3, codex.ActiveGroups);
+        while (answers.Count > 0)
+        {
+            answers.Dequeue().SetResult(false);
+        }
     }
 }

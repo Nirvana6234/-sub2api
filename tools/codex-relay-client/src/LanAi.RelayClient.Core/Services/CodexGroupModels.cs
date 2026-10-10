@@ -11,17 +11,37 @@ namespace LanAi.RelayClient.Services;
 /// the picker ends up offering a model the relay then rewrites.
 /// </para>
 /// <para>
-/// Built only from a switched-on whitelist. A group without one has no definite list of its
+/// Built from a switched-on whitelist. A group without one has no definite list of its
 /// own — every model the pool serves is fair game — so there is nothing to show and the
-/// caller passes null, which leaves Codex on its bundled list.
+/// caller passes null, which leaves Codex on its bundled list. The exception is a Claude group
+/// without a whitelist: its model is the one chosen on the Codex page, so the list is that
+/// model alone (<see cref="Pinned"/>) — the relay then sends it whatever Codex asks for, and a
+/// change on the page takes effect on the next turn.
 /// </para>
 /// </remarks>
 internal sealed class CodexGroupModels
 {
-    private CodexGroupModels(IReadOnlyList<string> models) => Models = models;
+    private CodexGroupModels(IReadOnlyList<string> models, bool isPinned = false)
+    {
+        Models = models;
+        IsPinned = isPinned;
+    }
 
     /// <summary>The whitelisted models, the default first and the rest in ordinal order.</summary>
     public IReadOnlyList<string> Models { get; }
+
+    /// <summary>
+    /// Not a whitelist but one model the user chose on the Codex page (<see cref="Pinned"/>);
+    /// for what the log says about it.
+    /// </summary>
+    public bool IsPinned { get; }
+
+    /// <summary>Just <paramref name="model"/>: every request is sent to it.</summary>
+    public static CodexGroupModels Pinned(string model)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(model);
+        return new CodexGroupModels([model.Trim()], isPinned: true);
+    }
 
     /// <summary>What Codex is moved to when it asks for something the group does not serve.</summary>
     public string DefaultModel => Models[0];

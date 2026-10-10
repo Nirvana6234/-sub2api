@@ -275,7 +275,9 @@ internal sealed class LocalPawRelay : IAsyncDisposable
         ClientLog.Info((groupId is null
             ? "本机 Relay（ChatGPT）已切换到自动分组"
             : $"本机 Relay（ChatGPT）已切换{FormatGroup(groupId, groupName)}") +
-            (groupId is not null && models is not null ? $"，模型白名单 {models.Models.Count} 个（默认 {models.DefaultModel}）" : string.Empty));
+            (groupId is null || models is null ? string.Empty
+                : models.IsPinned ? $"，固定使用客户端选的模型 {models.DefaultModel}"
+                : $"，模型白名单 {models.Models.Count} 个（默认 {models.DefaultModel}）"));
     }
 
     /// <summary>
@@ -1438,8 +1440,9 @@ internal sealed class LocalPawRelay : IAsyncDisposable
         string note = $"{group}:{requested}";
         if (!string.Equals(Interlocked.Exchange(ref _lastSubstitution, note), note, StringComparison.Ordinal))
         {
-            ClientLog.Info(
-                $"Codex 请求的模型 {Sanitize(requested)} 不在{FormatGroup(group, groupName)}的白名单内，已换成 {models.DefaultModel}");
+            ClientLog.Info(models.IsPinned
+                ? $"Codex 请求的模型 {Sanitize(requested)} 不是客户端为{FormatGroup(group, groupName)}选的模型，已换成 {models.DefaultModel}"
+                : $"Codex 请求的模型 {Sanitize(requested)} 不在{FormatGroup(group, groupName)}的白名单内，已换成 {models.DefaultModel}");
         }
 
         return rewritten;

@@ -362,11 +362,71 @@ public sealed partial class DashboardViewModel : ObservableObject
         OnPropertyChanged(nameof(CanStartCodex));
         OnPropertyChanged(nameof(StartCodexLabel));
 
-        if (_applyingKnownState || value is null || value.IsCurrent)
+        if (_applyingKnownState || value is null)
         {
             return;
         }
-        _ = _safeAsync.RunAsync(() => SwitchGroupAsync(value));
+
+        if (value.IsCurrent)
+        {
+            // Picked away and straight back before the switch began: nothing is to happen.
+            _pendingSwitch = null;
+            return;
+        }
+
+        _ = _safeAsync.RunAsync(() => RequestSwitchAsync(value));
+    }
+
+    /// <summary>
+    /// Lets the UI finish what it is in the middle of before a switch starts. The head supplies a
+    /// post to the dispatcher at a low priority; without one, a yield.
+    /// </summary>
+    public Func<Task> DeferUntilUiIdle { get; set; } = static async () => await Task.Yield();
+
+    /// <summary>The group last picked while a switch was still running, applied when it ends.</summary>
+    private GroupItemViewModel? _pendingSwitch;
+
+    private bool _switchRunning;
+
+    /// <summary>A pick from the dropdown: switched after the dropdown is done, one switch at a time.</summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Never inside the selection callback.</b> With Codex running, a switch reaches the
+    /// 「立即重启 / 等待」 dialog without a single real <c>await</c>, so the modal window opened
+    /// while the dropdown's popup was still closing and its selection event still on the stack.
+    /// Windows takes that; on macOS repeated switching made the client vanish with nothing in the
+    /// log — what a native crash looks like, since it passes none of the managed exception hooks.
+    /// </para>
+    /// <para>
+    /// <b>One at a time.</b> Each switch may ask a question and restart Codex. Picks made while one
+    /// runs are not started alongside it — two dialogs, or two restarts, stacked — but remembered,
+    /// the last one winning, and applied when it ends.
+    /// </para>
+    /// </remarks>
+    private async Task RequestSwitchAsync(GroupItemViewModel group)
+    {
+        _pendingSwitch = group;
+        if (_switchRunning)
+        {
+            ClientLog.Info("分组切换进行中，先记下这次选择，结束后再切换");
+            return;
+        }
+
+        _switchRunning = true;
+        try
+        {
+            await DeferUntilUiIdle().ConfigureAwait(true);
+            while (_pendingSwitch is { } next)
+            {
+                _pendingSwitch = null;
+                await SwitchGroupAsync(next).ConfigureAwait(true);
+            }
+        }
+        finally
+        {
+            _pendingSwitch = null;
+            _switchRunning = false;
+        }
     }
 
     /// <summary>Assigns the selection without treating it as a user action.</summary>
@@ -418,14 +478,39 @@ public sealed partial class DashboardViewModel : ObservableObject
     private string? _codexOnlyModel;
 
     /// <summary>What <paramref name="group"/> serves, or null when it has no list of its own.</summary>
+    /// <remarks>
+    /// A Claude group without a whitelist is pinned to the model chosen on this page. Before,
+    /// it had no list, so the relay changed nothing: the choice reached Codex only through the
+    /// <c>model =</c> line written at start-up, and the server-side preference that was to route
+    /// it is not deployed (404). Changing it with Codex running did nothing at all.
+    /// </remarks>
     private CodexGroupModels? ModelsFor(GroupItemViewModel? group)
     {
-        if (group is null || group.IsAutomatic || !group.HasModelAllowlist)
+        if (group is null || group.IsAutomatic)
         {
             return null;
         }
 
+        if (!group.HasModelAllowlist)
+        {
+            return IsClaudePlatform(group) ? CodexGroupModels.Pinned(ChosenClaudeModel) : null;
+        }
+
         return CodexGroupModels.From(group.AllowedModels, IsClaudePlatform(group) ? PreferredCodexModel : null);
+    }
+
+    /// <summary>
+    /// The model a Claude group without a whitelist uses: the page's choice when it is one of
+    /// the Claude models offered there, else the first — what <see cref="CodexModelChoice"/> shows.
+    /// </summary>
+    private string ChosenClaudeModel
+    {
+        get
+        {
+            IReadOnlyList<string> known = ClaudePreferenceViewModel.ClaudeModels;
+            string? chosen = PreferredCodexModel;
+            return known.FirstOrDefault(m => string.Equals(m, chosen, StringComparison.OrdinalIgnoreCase)) ?? known[0];
+        }
     }
 
     /// <summary>The model the Codex page currently names as the default, if it names one.</summary>
@@ -496,8 +581,16 @@ public sealed partial class DashboardViewModel : ObservableObject
             if (ClaudePreferenceViewModel.ClaudeModels.Contains(value))
             {
                 // One the account setting can hold: it is the shared preference, as before.
+                // Back from a whitelist-only pick to the model the preference already held, the
+                // preference does not change and says nothing — the relay must still hear of it.
+                bool unchanged = string.Equals(ClaudePreference.SelectedClaudeModel, value, StringComparison.Ordinal);
                 _codexOnlyModel = null;
                 ClaudePreference.SelectedClaudeModel = value;
+                if (unchanged)
+                {
+                    OnClaudePreferenceChanged();
+                }
+
                 return;
             }
 
@@ -562,13 +655,17 @@ public sealed partial class DashboardViewModel : ObservableObject
             ? "不用重启，下拉最多约 5 分钟后自动更新。"
             : $"不用重启，下拉最多约 5 分钟后自动更新；期间 Codex 仍请求旧模型时，共飞会自动换成 {models.DefaultModel}。";
 
+        // Each step logged: should the client vanish again here, the last line says at which.
+        ClientLog.Info("切换分组后弹出「立即重启 / 等待」确认");
         bool restart = await ConfirmModelListRestart(
                 $"已切换到 {to.Name}。{what}\n\n" +
                 "· 立即重启：马上看到新的模型列表，会中断正在进行的对话。\n" +
                 $"· 等待：{waiting}")
             .ConfigureAwait(true);
+        ClientLog.Info(restart ? "用户选择立即重启 Codex" : "用户选择等待");
         if (restart)
         {
+            ClientLog.Info("开始强制重启 Codex（切换分组后）");
             await StartCodexAsync(_ => Task.FromResult(true), cancellationToken, forceRestart: true).ConfigureAwait(true);
         }
     }

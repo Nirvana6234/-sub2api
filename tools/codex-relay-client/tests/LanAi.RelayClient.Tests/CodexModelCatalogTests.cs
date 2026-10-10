@@ -240,6 +240,21 @@ public sealed class CodexModelCatalogTests
     }
 
     [Fact]
+    public void APinnedModelReplacesWhateverCodexAsksFor()
+    {
+        // A Claude group without a whitelist: Codex may ask for the model it started with or one
+        // from its own GPT list; either way the request goes to the model chosen on the page.
+        CodexGroupModels pinned = CodexGroupModels.Pinned("claude-opus-5");
+
+        Assert.Contains("\"claude-opus-5\"", Substitute("""{"model":"claude-sonnet-5","input":[]}""", pinned, out string? fromClaude), StringComparison.Ordinal);
+        Assert.Equal("claude-sonnet-5", fromClaude);
+        Assert.Contains("\"claude-opus-5\"", Substitute("""{"model":"gpt-5.5","input":[]}""", pinned, out _), StringComparison.Ordinal);
+        Assert.Null(Substitute("""{"model":"claude-opus-5","input":[]}""", pinned, out _));
+        Assert.True(pinned.IsPinned);
+        Assert.False(CodexGroupModels.From(["claude-opus-5"])!.IsPinned);
+    }
+
+    [Fact]
     public void ReplacesOnlyTheTopLevelModelValueAndEveryOtherByteSurvives()
     {
         var models = CodexGroupModels.From(["claude-sonnet-5"])!;
