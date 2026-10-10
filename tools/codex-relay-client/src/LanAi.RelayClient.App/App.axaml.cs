@@ -769,18 +769,63 @@ public partial class App : Application
         return intent;
     }
 
+    /// <summary>
+    /// Longest the whole exit may take. Past it the process is ended where it stands: the work
+    /// here runs on the UI thread, so one step that never returns is an application that spins
+    /// forever and cannot be quit without a force-quit — worse than ending with a step undone,
+    /// which the next start puts right.
+    /// </summary>
+    private static readonly TimeSpan ExitDeadline = TimeSpan.FromSeconds(12);
+
+    /// <summary>The exit step that is running, so a timeout can say which one it was stuck on.</summary>
+    private static volatile string _exitStep = "";
+
     private void OnExit()
     {
         ClientLog.Info("客户端退出");
-        _weChatIntent?.Dispose();
-        _shutdown?.ReleaseBeforeProcessExit();
+
+        var watchdog = new Thread(() =>
+        {
+            Thread.Sleep(ExitDeadline);
+            ClientLog.Error($"退出超过 {ExitDeadline.TotalSeconds:0} 秒仍未完成（卡在「{_exitStep}」），直接结束进程");
+            Environment.Exit(0);
+        })
+        {
+            IsBackground = true,
+            Name = "exit-watchdog",
+        };
+        watchdog.Start();
+
+        // Each step runs on its own, so one that throws does not keep the rest from running; the
+        // one in progress is remembered for the timeout above to name.
+        ExitStep("停止微信意图判断", () => _weChatIntent?.Dispose());
+        ExitStep("释放授权并还原配置", () =>
+        {
+            if (_shutdown is not null && !_shutdown.ReleaseBeforeProcessExit(TimeSpan.FromSeconds(8)))
+            {
+                ClientLog.Warning("释放授权并还原配置在 8 秒内没有完成，不再等待");
+            }
+        });
 
         // Best effort and bounded: the server notices a dropped socket on its own.
-        _desktopSyncLink?.StopAsync().Wait(TimeSpan.FromSeconds(2));
-        _singleInstance?.Dispose();
-        _tray?.Dispose();
-        _notifications?.Dispose();
-        _http?.Dispose();
+        ExitStep("断开桌面同步", () => _desktopSyncLink?.StopAsync().Wait(TimeSpan.FromSeconds(2)));
+        ExitStep("释放单实例锁", () => _singleInstance?.Dispose());
+        ExitStep("移除菜单栏图标", () => _tray?.Dispose());
+        ExitStep("关闭通知", () => _notifications?.Dispose());
+        ExitStep("关闭网络连接", () => _http?.Dispose());
+    }
+
+    private static void ExitStep(string name, Action step)
+    {
+        _exitStep = name;
+        try
+        {
+            step();
+        }
+        catch (Exception ex)
+        {
+            ClientLog.Warning($"退出时「{name}」出错，继续后面的步骤", ex);
+        }
     }
 
     /// <remarks>
