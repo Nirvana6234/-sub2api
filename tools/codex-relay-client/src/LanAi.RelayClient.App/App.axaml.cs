@@ -205,6 +205,11 @@ public partial class App : Application
         // The account session is handed over as a delegate, not a value: the relay asks
         // for it per request, so a rotated access token reaches it without anything
         // pushing an update. See LocalPawRelay's constructor for why that matters.
+        // Found and read once now, in the background, and the outcome written to the log: when the
+        // model list later comes up empty, this is the line that says whether Codex was missing,
+        // somewhere unexpected, or would not run.
+        var codexCatalogSource = new CodexBundledCatalogSource();
+        _ = Task.Run(() => codexCatalogSource.ProbeAsync());
         var localRelay = new LocalPawRelay(
             ClientOptions.ServerAddress, session.GetAccessTokenAsync,
             (before, saved) => contextFilterUsage.Add(before, saved),
@@ -218,7 +223,7 @@ public partial class App : Application
                 localProxyUsage.Add(usage);
                 Avalonia.Threading.Dispatcher.UIThread.Post(() => dashboardForRelay?.LocalProxy.RefreshUsage());
             },
-            codexCatalogSource: new CodexBundledCatalogSource());
+            codexCatalogSource: codexCatalogSource);
         // Claude Code's settings.json and the editor's own settings, put back on exit.
         var pluginBinding = new ClaudePluginBinding(
             new ClaudeCodeSettingsWriter(Path.Combine(AppPaths.PluginConfigRoot, "claude-settings-journal.json")),
@@ -226,7 +231,8 @@ public partial class App : Application
 
         // Optional, and decided by nothing more than whether the file is there: a package
         // without it runs Codex → relay directly and greys out the switch. From 1.0 both
-        // packages carry it — the Windows .exe, and upstream's darwin-arm64 build in the .app.
+        // packages carry it — the Windows .exe, and upstream's darwin build for the .app's own
+        // architecture (arm64 or amd64).
         string contextFilterPath = Path.Combine(AppContext.BaseDirectory, "context-filter",
             OperatingSystem.IsWindows() ? "context-filter.exe" : "context-filter");
         ContextFilterProcess? contextFilter = File.Exists(contextFilterPath)

@@ -319,6 +319,50 @@ public sealed class CodexModelCatalogTests
     }
 
     [Fact]
+    public async Task TheStartupProbeLogsWhereItLookedWhenCodexIsNotFound()
+    {
+        var log = new System.Text.StringBuilder();
+        using (ClientLog.Capture(log))
+        {
+            var source = new CodexBundledCatalogSource(
+                () => null,
+                (_, _) => throw new InvalidOperationException("must not run"),
+                () => "C:\\somewhere\\codex.exe（无）");
+
+            await source.ProbeAsync();
+            await source.ProbeAsync(); // Once per source, not once per ask.
+        }
+
+        string text = log.ToString();
+        Assert.Contains("没有找到 Codex 的命令行程序", text, StringComparison.Ordinal);
+        Assert.Contains("C:\\somewhere\\codex.exe（无）", text, StringComparison.Ordinal);
+        Assert.Equal(1, System.Text.RegularExpressions.Regex.Matches(text, "没有找到 Codex 的命令行程序").Count);
+    }
+
+    [Fact]
+    public async Task TheStartupProbeLogsHowManyModelsItReadAndNeverThrows()
+    {
+        string exe = Path.GetTempFileName();
+        try
+        {
+            var log = new System.Text.StringBuilder();
+            using (ClientLog.Capture(log))
+            {
+                await new CodexBundledCatalogSource(() => exe, (_, _) => Task.FromResult<string?>("{\"models\":[{},{},{}]}")).ProbeAsync();
+                await new CodexBundledCatalogSource(() => exe, (_, _) => throw new InvalidOperationException("boom")).ProbeAsync();
+            }
+
+            string text = log.ToString();
+            Assert.Contains("3 个模型", text, StringComparison.Ordinal);
+            Assert.Contains("启动时检测 Codex 自带模型目录失败", text, StringComparison.Ordinal);
+        }
+        finally
+        {
+            File.Delete(exe);
+        }
+    }
+
+    [Fact]
     public async Task ACatalogThatFailedToLoadIsAskedForAgainNextTime()
     {
         int runs = 0;
