@@ -47,6 +47,7 @@ import {
   describeAgentError,
   endAgentThread,
   interruptAgent,
+  rebindAgentGroup,
   resumeAgent,
   sendToAgent,
   startAgent,
@@ -400,6 +401,12 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
 
   // threadId → conversationId：事件流只带 threadId，这张表是唯一的回查路径。
   const threadOwnerRef = useRef<Map<string, string>>(new Map());
+  /**
+   * 每条 thread 此刻在转发层里登记的分组。分组只在起 / 恢复 thread 时登记，而模型是每轮传的：
+   * 对话中途换分组，不改绑的话请求就是「旧分组 + 新分组的模型」，后端校验不过。
+   * 发送前拿它和当前选的分组比，不一样就改绑（见 `send`）。
+   */
+  const threadGroupRef = useRef<Map<string, number>>(new Map());
   const bookkeepingRef = useRef<Map<string, ConversationBookkeeping>>(new Map());
   const sendingConversationsRef = useRef<Set<string>>(new Set());
 
@@ -1148,6 +1155,7 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
             patchRuntime(conversationId, { threadId });
           }
             setAgentThreadId(conversationId, threadId);
+            threadGroupRef.current.set(threadId, groupId);
             attempts = resumed.attempts;
           } catch (resumeError) {
             threadOwnerRef.current.delete(threadId);
@@ -1177,6 +1185,7 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
           threadId = started.threadId;
           attempts = started.attempts;
           threadOwnerRef.current.set(threadId, conversationId);
+          threadGroupRef.current.set(threadId, groupId);
           patchRuntime(conversationId, { threadId });
           setAgentThreadId(conversationId, threadId);
           // **这才是真正"开启会话"的那一刻**——之前光选目录不算数。
@@ -1187,9 +1196,19 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
           appendNotice(conversationId, `_引擎重试了 ${attempts} 次才起来。_`);
         }
         patchRuntime(conversationId, { sending: true });
+        // 对话中途换了分组：这条 thread 在转发层里登记的还是旧分组，而本轮的模型已经是新分组的。
+        // 不先改绑，后端会拿「旧分组」去校验「新分组的模型」，报「当前分组不支持所选模型」。
+        // 没登记过也改绑一次（幂等）：宁可多绑一次，也不拿一个不确定的归属去发。
+        if (threadGroupRef.current.get(threadId) !== groupId) {
+          await rebindAgentGroup(threadId, groupId);
+          threadGroupRef.current.set(threadId, groupId);
+        }
         await sendToAgent({ threadId, text, model: modelId, reasoning });
       } catch (e) {
-        if (threadId) threadOwnerRef.current.delete(threadId);
+        if (threadId) {
+          threadOwnerRef.current.delete(threadId);
+          threadGroupRef.current.delete(threadId);
+        }
         setAgentThreadId(conversationId, null);
         patchRuntime(conversationId, { threadId: null, sending: false });
         finishTurn(conversationId, assistantMessage.id, { error: true });

@@ -92,6 +92,16 @@ async fn agent_end_thread(
     bridge.end_thread(&thread_id).await
 }
 
+/// 把一条 thread 改绑到另一个分组（对话中途换分组用）。thread 本身不动。
+#[tauri::command]
+async fn agent_rebind_group(
+    bridge: tauri::State<'_, Arc<AgentBridge>>,
+    thread_id: String,
+    group_id: i64,
+) -> Result<(), BridgeError> {
+    bridge.rebind_group(&thread_id, group_id).await
+}
+
 #[tauri::command]
 async fn agent_compact(
     bridge: tauri::State<'_, Arc<AgentBridge>>,
@@ -331,6 +341,7 @@ pub fn run() {
             agent_interrupt,
             agent_answer,
             agent_end_thread,
+            agent_rebind_group,
             agent_compact,
             agent_stop,
             agent_set_session_token,

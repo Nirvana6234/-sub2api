@@ -216,6 +216,39 @@ async fn the_group_comes_from_the_thread_that_sent_the_request() {
     assert_eq!(seen[1].header("x-paw-group-id").as_deref(), Some("9"));
 }
 
+/// 对话中途换分组：同一条 thread 改绑之后，下一轮请求就带新分组。
+///
+/// 这是「GPT 开的会话切到 Claude 分组后报『当前分组不支持所选模型』」的修复所依赖的行为——
+/// 模型每轮跟着新分组走，分组却只在起 thread 时登记一次，不改绑就成了「旧分组 + 新模型」。
+#[tokio::test]
+async fn rebinding_a_thread_moves_its_next_request_to_the_new_group() {
+    let (upstream, seen) = fake_relay(vec!["data: 1\n\n"], Duration::ZERO).await;
+    let relay = LocalRelay::start(&upstream, "test-agent/1.0").await.unwrap();
+    relay.set_session_token(Some("jwt".to_owned())).await;
+    relay.bind_thread("thread-a", 7).await;
+    let url = format!("{}/responses", relay.base_url());
+
+    for round in 0..2 {
+        if round == 1 {
+            relay.bind_thread("thread-a", 9).await;
+        }
+        let response = client()
+            .post(&url)
+            .header("authorization", format!("Bearer {}", relay.token()))
+            .header("thread-id", "thread-a")
+            .body(PAYLOAD)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let _ = response.bytes().await;
+    }
+
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen[0].header("x-paw-group-id").as_deref(), Some("7"));
+    assert_eq!(seen[1].header("x-paw-group-id").as_deref(), Some("9"), "改绑后下一轮必须带新分组");
+}
+
 /// 报了一个没登记过的 thread，**宁可报错也不拿别的顶上** ——
 /// 顶上就意味着这一轮悄悄跑在用户没选的分组上，额度记到别处，两端都没提示。
 #[tokio::test]

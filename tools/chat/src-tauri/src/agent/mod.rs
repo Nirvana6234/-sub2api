@@ -355,6 +355,22 @@ impl AgentBridge {
         Ok(())
     }
 
+    /// 把一条已经在跑的 thread 改绑到另一个分组。
+    ///
+    /// 分组是每条 thread 一个，只在起 thread / 恢复 thread 时登记一次。对话中途换分组时，
+    /// 前端每轮发的 `model` 跟着新分组走了，而这条 thread 在转发层里登记的还是旧分组——
+    /// 请求就变成「旧分组 + 新分组的模型」，后端按目录校验不过（「当前分组不支持所选模型」）。
+    /// 这里只改登记，不碰 thread 本身，历史和上下文原样保留。
+    pub async fn rebind_group(&self, thread_id: &str, group_id: i64) -> Result<(), BridgeError> {
+        if thread_id.trim().is_empty() {
+            return Err(BridgeError::BadParams("threadId 不能为空".to_owned()));
+        }
+        let slot = self.engine.lock().await;
+        let engine = slot.as_ref().ok_or(BridgeError::NotRunning)?;
+        engine.relay.bind_thread(thread_id, group_id).await;
+        Ok(())
+    }
+
     /// Compact one live thread without stopping the shared engine.
     pub async fn compact(&self, thread_id: &str) -> Result<(), BridgeError> {
         let slot = self.engine.lock().await;

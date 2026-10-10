@@ -274,6 +274,17 @@ export async function resumeAgent(params: ResumeAgentParams): Promise<StartedThr
   return call<StartedThread>("agent_resume", { params });
 }
 
+/**
+ * 把一条已经在跑的 thread 改绑到另一个分组，thread 本身（历史、上下文）不动。
+ *
+ * 分组是每条 thread 一个、只在 `startAgent` / `resumeAgent` 时登记一次，而 `model` 是每轮传的。
+ * 对话中途换分组时不改绑，请求就是「旧分组 + 新分组的模型」，后端按目录校验不过
+ * （「当前分组不支持所选模型」）。
+ */
+export async function rebindAgentGroup(threadId: string, groupId: number): Promise<void> {
+  return call<void>("agent_rebind_group", { threadId, groupId });
+}
+
 export async function sendToAgent(params: SendAgentParams): Promise<void> {
   return call<void>("agent_send", { params });
 }
