@@ -378,6 +378,69 @@ public sealed class CodexModelCatalogTests
     }
 
     [Fact]
+    public async Task WhenTheFirstCopyOfCodexWillNotRunTheNextOneIsUsed()
+    {
+        string broken = Path.GetTempFileName();
+        string working = Path.GetTempFileName();
+        try
+        {
+            var ran = new List<string>();
+            var source = new CodexBundledCatalogSource(
+                run: (exe, _) =>
+                {
+                    ran.Add(exe);
+                    return Task.FromResult<string?>(exe == broken ? null : "{\"models\":[{}]}");
+                },
+                locateAll: () => [broken, working]);
+
+            Assert.Equal("{\"models\":[{}]}", await source.GetBundledCatalogAsync());
+            Assert.Equal([broken, working], ran);
+
+            // What was read is kept: no second start of anything, neither the broken one nor the good one.
+            Assert.Equal("{\"models\":[{}]}", await source.GetBundledCatalogAsync());
+            Assert.Equal(2, ran.Count);
+        }
+        finally
+        {
+            File.Delete(broken);
+            File.Delete(working);
+        }
+    }
+
+    [Fact]
+    public async Task WhenEveryCopyFailsEachIsAskedAgainOnTheNextRequest()
+    {
+        string flaky = Path.GetTempFileName();
+        string other = Path.GetTempFileName();
+        try
+        {
+            var ran = new List<string>();
+            int flakyRuns = 0;
+            var source = new CodexBundledCatalogSource(
+                run: (exe, _) =>
+                {
+                    ran.Add(exe);
+                    if (exe == flaky) { flakyRuns++; }
+                    return Task.FromResult<string?>(null);
+                },
+                locateAll: () => [flaky, other]);
+
+            Assert.Null(await source.GetBundledCatalogAsync());
+            Assert.Null(await source.GetBundledCatalogAsync());
+
+            // Nothing was read, so nothing is remembered as good: Codex may simply have been
+            // starting, and a request that finds both still failing must not give up for good.
+            Assert.Equal(2, flakyRuns);
+            Assert.Equal(4, ran.Count);
+        }
+        finally
+        {
+            File.Delete(flaky);
+            File.Delete(other);
+        }
+    }
+
+    [Fact]
     public async Task ACatalogThatFailedToLoadIsAskedForAgainNextTime()
     {
         int runs = 0;

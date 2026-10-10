@@ -12,10 +12,12 @@ namespace LanAi.RelayClient.App;
 /// it — the window contradicting its own instruction.
 /// </para>
 /// <para>
-/// The client therefore exits only through the tray's 退出 entry, which is what sets
-/// <see cref="ExitRequested"/>. If no tray could be created the close button falls back
-/// to a real exit, because a window that cannot be closed and has nowhere to hide is
-/// worse than one that quits.
+/// The close button therefore never exits: the tray's 退出 entry (which sets
+/// <see cref="ExitRequested"/>) and the panel's 退出 do. A quit asked of the application
+/// rather than of this window — ⌘Q, Dock ▸ Quit, the OS shutting down — is let through,
+/// since it is not the close button and nothing else would honour it. If no tray could be
+/// created the close button falls back to a real exit, because a window that cannot be
+/// closed and has nowhere to hide is worse than one that quits.
 /// </para>
 /// </remarks>
 public partial class ShellWindow : Window
@@ -51,6 +53,16 @@ public partial class ShellWindow : Window
 
     private void ShellWindow_OnClosing(object? sender, WindowClosingEventArgs e)
     {
+        // The application itself is being asked to quit — ⌘Q, Dock ▸ Quit, an Apple Event quit (the
+        // installer's way of replacing a running copy), or the OS shutting down — not the user
+        // pressing this window's close button. Hiding then leaves a process that cannot be quit
+        // from anywhere but the tray. The cleanup (config restored, key released) runs in
+        // App.OnExit, which this lets happen.
+        if (e.CloseReason is WindowCloseReason.ApplicationShutdown or WindowCloseReason.OSShutdown)
+        {
+            return;
+        }
+
         if (ExitRequested || !HasTray)
         {
             return;

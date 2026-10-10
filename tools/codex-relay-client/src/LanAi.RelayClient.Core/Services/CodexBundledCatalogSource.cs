@@ -39,19 +39,23 @@ internal sealed class CodexBundledCatalogSource : ICodexCatalogSource
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(20);
 
-    private readonly Func<string?> _locateExecutable;
+    private readonly Func<IReadOnlyList<string>> _locateAll;
     private readonly Func<string, CancellationToken, Task<string?>> _run;
     private readonly Func<string> _describeLookup;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private (string Key, string Json)? _cached;
+    private readonly HashSet<string> _failedKeys = [];
     private string? _lastMissing;
 
     public CodexBundledCatalogSource(
         Func<string?>? locateExecutable = null,
         Func<string, CancellationToken, Task<string?>>? run = null,
-        Func<string>? describeLookup = null)
+        Func<string>? describeLookup = null,
+        Func<IEnumerable<string>>? locateAll = null)
     {
-        _locateExecutable = locateExecutable ?? LocateInstalledCodex;
+        _locateAll = locateAll is not null ? () => [.. locateAll()]
+            : locateExecutable is not null ? () => locateExecutable() is { } one ? [one] : []
+            : () => [.. LocateAllInstalledCodex()];
         _run = run ?? RunAsync;
         _describeLookup = describeLookup ?? DescribeLookup;
     }
@@ -109,10 +113,10 @@ internal sealed class CodexBundledCatalogSource : ICodexCatalogSource
 
     public async Task<string?> GetBundledCatalogAsync(CancellationToken cancellationToken = default)
     {
-        string? executable;
+        IReadOnlyList<string> executables;
         try
         {
-            executable = _locateExecutable();
+            executables = _locateAll();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -120,7 +124,7 @@ internal sealed class CodexBundledCatalogSource : ICodexCatalogSource
             return null;
         }
 
-        if (executable is null)
+        if (executables.Count == 0)
         {
             // Asked on every model-list request, so say it when the answer changes, not every time:
             // the next line in the log is "读不到 Codex 自带的模型目录", and without this nothing
@@ -135,23 +139,36 @@ internal sealed class CodexBundledCatalogSource : ICodexCatalogSource
             return null;
         }
 
-        string key = executable + "|" + SafeStamp(executable);
+        (string Path, string Key)[] candidates = [.. executables.Select(path => (path, path + "|" + SafeStamp(path)))];
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (_cached is { } cached && cached.Key == key)
+            // Anything already read from one of these is the answer, whichever it was.
+            if (_cached is { } cached && candidates.Any(c => c.Key == cached.Key))
             {
                 return cached.Json;
             }
 
-            string? json = await _run(executable, cancellationToken).ConfigureAwait(false);
-            if (json is not null)
+            // Every one is tried, not just the first that exists. A copy can be there and still
+            // not run — the Store package's own folder is not somewhere every Windows will start a
+            // program from — while the user-level copy beside it does. Ones that failed before are
+            // tried last, so a good one is not held up by a bad one, yet a lone candidate that failed
+            // once (Codex still starting, say) is asked again next time.
+            foreach ((string path, string key) in candidates.OrderBy(c => _failedKeys.Contains(c.Key)))
             {
-                _cached = (key, json);
-                ClientLog.Info($"已读到 Codex 自带的模型目录（{CountModels(json)} 个模型），位置：{executable}");
+                string? json = await _run(path, cancellationToken).ConfigureAwait(false);
+                if (json is not null)
+                {
+                    _cached = (key, json);
+                    _failedKeys.Remove(key);
+                    ClientLog.Info($"已读到 Codex 自带的模型目录（{CountModels(json)} 个模型），位置：{path}");
+                    return json;
+                }
+
+                _failedKeys.Add(key);
             }
 
-            return json;
+            return null;
         }
         finally
         {
@@ -283,7 +300,11 @@ internal sealed class CodexBundledCatalogSource : ICodexCatalogSource
     /// install the <c>codex</c> shim uses. macOS: inside the app bundle. Where it cannot be
     /// found the answer is null and Codex keeps its own list — never an error.
     /// </remarks>
-    internal static string? LocateInstalledCodex() => CandidateExecutables().FirstOrDefault(File.Exists);
+    internal static string? LocateInstalledCodex() => LocateAllInstalledCodex().FirstOrDefault();
+
+    /// <summary>Every candidate that exists, best first, without repeats.</summary>
+    internal static IEnumerable<string> LocateAllInstalledCodex() =>
+        CandidateExecutables().Where(File.Exists).Distinct(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Every place the lookup tries, best first. One list for both finding Codex and saying
