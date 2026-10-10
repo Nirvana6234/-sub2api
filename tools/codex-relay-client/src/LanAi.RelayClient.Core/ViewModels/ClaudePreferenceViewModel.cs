@@ -76,8 +76,43 @@ public sealed partial class ClaudePreferenceViewModel : ObservableObject
     [ObservableProperty]
     private string selectedClaudeThinkingLevel = ClaudeThinkingLevels[DefaultClaudeThinkingLevelIndex];
 
-    partial void OnSelectedClaudeThinkingLevelChanged(string value) =>
-        _ = _loading ? Task.CompletedTask : _safeAsync.RunAsync(SaveAsync);
+    partial void OnSelectedClaudeThinkingLevelChanged(string value)
+    {
+        if (_loading)
+        {
+            return;
+        }
+
+        _ = _safeAsync.RunAsync(SaveAsync);
+
+        // Codex's picker starts at this level (see CodexEffort), so the relay has to hear of it.
+        Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// The thinking strength as Codex's picker names it, or null when thinking is off.
+    /// </summary>
+    /// <remarks>
+    /// The setting saved to the server has never reached anything: that route is not deployed (404),
+    /// so Codex had no thinking strength for a Claude model at all. This is what carries it to Codex
+    /// now — as the level the picker starts at. 「极高」 is Codex's <c>xhigh</c>, which the server's
+    /// bridge turns into Claude's highest effort.
+    /// </remarks>
+    internal string? CodexEffort
+    {
+        get
+        {
+            int at = System.Array.IndexOf(ClaudeThinkingLevels.ToArray(), SelectedClaudeThinkingLevel);
+            return at < 0 ? null : _thinkingLevelKeys[at] switch
+            {
+                "low" => "low",
+                "medium" => "medium",
+                "high" => "high",
+                "max" => "xhigh",
+                _ => null,
+            };
+        }
+    }
 
     internal async Task LoadAsync()
     {

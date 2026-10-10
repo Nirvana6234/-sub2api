@@ -493,10 +493,13 @@ public sealed partial class DashboardViewModel : ObservableObject
 
         if (!group.HasModelAllowlist)
         {
-            return IsClaudePlatform(group) ? CodexGroupModels.Pinned(ChosenClaudeModel) : null;
+            return IsClaudePlatform(group)
+                ? CodexGroupModels.Pinned(ChosenClaudeModel).WithClaudeEffort(ClaudePreference.CodexEffort)
+                : null;
         }
 
-        return CodexGroupModels.From(group.AllowedModels, IsClaudePlatform(group) ? PreferredCodexModel : null);
+        CodexGroupModels? models = CodexGroupModels.From(group.AllowedModels, IsClaudePlatform(group) ? PreferredCodexModel : null);
+        return IsClaudePlatform(group) ? models?.WithClaudeEffort(ClaudePreference.CodexEffort) : models;
     }
 
     /// <summary>

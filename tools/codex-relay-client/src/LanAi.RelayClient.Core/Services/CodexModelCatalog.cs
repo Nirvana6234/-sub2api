@@ -50,7 +50,7 @@ internal static class CodexModelCatalog
         var entries = new JsonArray();
         for (int i = 0; i < models.Models.Count; i++)
         {
-            entries.Add((JsonNode)Entry(template, models.Models[i], i + 1));
+            entries.Add((JsonNode)Entry(template, models.Models[i], i + 1, models.ClaudeEffort));
         }
 
         return new JsonObject { ["models"] = entries }.ToJsonString();
@@ -77,7 +77,7 @@ internal static class CodexModelCatalog
         entry["multi_agent_version"] is null &&
         !(entry["use_responses_lite"] is JsonValue lite && lite.GetValueKind() == JsonValueKind.True);
 
-    private static JsonObject Entry(JsonObject template, string slug, int priority)
+    private static JsonObject Entry(JsonObject template, string slug, int priority, string? claudeEffort = null)
     {
         var copy = (JsonObject)template.DeepClone();
         copy["slug"] = slug;
@@ -114,11 +114,34 @@ internal static class CodexModelCatalog
         // sends one — the server then logs every request as having no reasoning effort.
         // Only the three reasoning fields keep the template's values; everything else above
         // stays forced off.
+        //
+        // The other exception is a Claude model when the user has chosen a thinking strength on the
+        // 共飞 Codex page (<paramref name="claudeEffort"/>): the picker is then offered, limited to
+        // the levels the server's bridge turns into thinking, and starts at that choice. With none
+        // chosen ("关闭") nothing is offered and nothing is sent, as before.
         if (!IsOpenAiFamily(slug))
         {
             copy["default_reasoning_level"] = null;
             copy["supported_reasoning_levels"] = new JsonArray();
             copy["supports_reasoning_effort_updates"] = false;
+
+            if (claudeEffort is not null && template["supported_reasoning_levels"] is JsonArray offered)
+            {
+                // Codex's own list, in its own order and wording, minus what the bridge refuses.
+                JsonArray levels = [.. offered
+                    .OfType<JsonObject>()
+                    .Where(level => level["effort"] is JsonValue effort &&
+                                    CodexGroupModels.ClaudeEfforts.Contains((string?)effort ?? string.Empty, StringComparer.OrdinalIgnoreCase))
+                    .Select(level => (JsonNode)level.DeepClone())];
+                bool offersChoice = levels.OfType<JsonObject>()
+                    .Any(level => string.Equals((string?)level["effort"], claudeEffort, StringComparison.OrdinalIgnoreCase));
+                if (offersChoice)
+                {
+                    copy["supported_reasoning_levels"] = levels;
+                    copy["default_reasoning_level"] = claudeEffort;
+                    copy["supports_reasoning_effort_updates"] = template["supports_reasoning_effort_updates"]?.DeepClone() ?? false;
+                }
+            }
         }
         copy["supports_reasoning_summary_parameter"] = true;
         copy["default_reasoning_summary"] = "auto";

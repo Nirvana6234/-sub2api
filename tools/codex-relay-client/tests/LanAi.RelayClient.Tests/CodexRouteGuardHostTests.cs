@@ -131,7 +131,8 @@ internal sealed class FakeCodexRouteGuardHost : ICodexRouteGuardHost
         CancellationToken cancellationToken = default,
         string? catalogUrl = null,
         string? preferredModel = null,
-        IReadOnlyCollection<string>? keepModelIfIn = null)
+        IReadOnlyCollection<string>? keepModelIfIn = null,
+        string? preferredReasoningEffort = null)
     {
         StartCallCount++;
         return Task.CompletedTask;

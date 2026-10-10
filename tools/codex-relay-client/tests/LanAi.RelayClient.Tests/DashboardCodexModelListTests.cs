@@ -149,6 +149,50 @@ public sealed class DashboardCodexModelListTests
     }
 
     [Fact]
+    public async Task TheThinkingStrengthChosenOnThePageReachesTheRelayAsCodexsStartingEffort()
+    {
+        // The setting used to be saved to a server route that is not deployed, so Codex had no
+        // thinking strength for a Claude model at all. It now travels with the model list.
+        (DashboardViewModel dashboard, FakeCodexStartup codex) = await BuildNoListAsync();
+
+        dashboard.ClaudePreference.SelectedClaudeThinkingLevel = "高";
+        Assert.Equal("high", codex.ActiveGroupModels[^1]!.ClaudeEffort);
+
+        dashboard.ClaudePreference.SelectedClaudeThinkingLevel = "低";
+        Assert.Equal("low", codex.ActiveGroupModels[^1]!.ClaudeEffort);
+
+        // 「极高」 is Codex's xhigh, which the server's bridge turns into Claude's highest effort.
+        dashboard.ClaudePreference.SelectedClaudeThinkingLevel = "极高";
+        Assert.Equal("xhigh", codex.ActiveGroupModels[^1]!.ClaudeEffort);
+
+        // Off means no picker for a Claude model, as before.
+        dashboard.ClaudePreference.SelectedClaudeThinkingLevel = "关闭";
+        Assert.Null(codex.ActiveGroupModels[^1]!.ClaudeEffort);
+    }
+
+    [Fact]
+    public async Task StartingCodexPassesTheChosenThinkingStrengthOn()
+    {
+        (DashboardViewModel dashboard, FakeCodexStartup codex) = await BuildNoListAsync();
+        dashboard.ClaudePreference.SelectedClaudeThinkingLevel = "低";
+
+        await dashboard.StartCodexAsync(_ => Task.FromResult(false));
+
+        Assert.Equal("low", codex.LastGroupModels!.ClaudeEffort);
+    }
+
+    [Fact]
+    public async Task ANonClaudeGroupNeverCarriesAClaudeThinkingStrength()
+    {
+        (DashboardViewModel dashboard, FakeCodexStartup codex) = await BuildAsync(startOn: 2);
+        dashboard.ClaudePreference.SelectedClaudeThinkingLevel = "高";
+
+        await dashboard.SwitchGroupAsync(Item(dashboard, OpenAiGroup.Id));
+
+        Assert.Null(codex.ActiveGroupModels[^1]!.ClaudeEffort);
+    }
+
+    [Fact]
     public async Task ANonClaudeGroupWithoutAWhitelistIsStillLeftOnCodexsOwnList()
     {
         (DashboardViewModel dashboard, FakeCodexStartup codex) = await BuildNoListAsync();

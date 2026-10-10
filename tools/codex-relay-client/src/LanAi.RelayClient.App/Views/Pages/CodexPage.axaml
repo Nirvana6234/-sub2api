@@ -166,7 +166,7 @@
                         SelectedItem="{Binding Dashboard.ClaudePreference.SelectedClaudeThinkingLevel, Mode=TwoWay}"
                         HorizontalAlignment="Stretch" Padding="8,6" />
             </Grid>
-            <TextBlock Text="思考强度影响回答深度与速度；与 Claude 页的设置是同一份" Classes="hint" Margin="0,4,0,0" />
+            <TextBlock Text="思考强度影响回答深度与速度；与 Claude 页的设置是同一份。选「关闭」时 Codex 里没有思考强度选项；其他档位是 Codex 里思考强度选择器的起始档位；Codex 记住过你上次选的强度后，新对话以 Codex 里显示的为准。" Classes="hint" Margin="0,4,0,0" />
           </StackPanel>
         </StackPanel>
       </Border>

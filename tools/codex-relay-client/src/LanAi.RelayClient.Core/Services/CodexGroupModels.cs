@@ -21,10 +21,34 @@ namespace LanAi.RelayClient.Services;
 /// </remarks>
 internal sealed class CodexGroupModels
 {
-    private CodexGroupModels(IReadOnlyList<string> models, bool isPinned = false)
+    private CodexGroupModels(IReadOnlyList<string> models, bool isPinned = false, string? claudeEffort = null)
     {
         Models = models;
         IsPinned = isPinned;
+        ClaudeEffort = claudeEffort;
+    }
+
+    /// <summary>
+    /// The reasoning efforts a Claude model may be offered in Codex's picker: the ones the server's
+    /// bridge turns into thinking. Codex's own list also holds <c>max</c> and <c>ultra</c>; the
+    /// bridge refuses the second, so it is never offered.
+    /// </summary>
+    internal static readonly IReadOnlyList<string> ClaudeEfforts = ["low", "medium", "high", "xhigh"];
+
+    /// <summary>
+    /// The effort a Claude model starts at, when Codex's picker is to offer one for it; null keeps
+    /// the picker empty for Claude models, as it has always been. Always one of <see cref="ClaudeEfforts"/>.
+    /// </summary>
+    public string? ClaudeEffort { get; }
+
+    /// <summary>
+    /// The same list with the effort Claude models start at set (or cleared, for null). An effort
+    /// that is not one the bridge accepts is treated as none, not passed on.
+    /// </summary>
+    public CodexGroupModels WithClaudeEffort(string? effort)
+    {
+        string? known = ClaudeEfforts.FirstOrDefault(e => string.Equals(e, effort?.Trim(), StringComparison.OrdinalIgnoreCase));
+        return new CodexGroupModels(Models, IsPinned, known);
     }
 
     /// <summary>The whitelisted models, the default first and the rest in ordinal order.</summary>
@@ -50,7 +74,9 @@ internal sealed class CodexGroupModels
     /// A string that differs exactly when the picker Codex would show differs. What the
     /// dashboard compares to decide whether a group switch needs a restart to be seen.
     /// </summary>
-    public string Signature => string.Join('\n', Models);
+    public string Signature => ClaudeEffort is null
+        ? string.Join('\n', Models)
+        : string.Join('\n', Models) + "\neffort:" + ClaudeEffort;
 
     /// <summary>Whether the group serves <paramref name="model"/>. Model ids are not case-sensitive to the server.</summary>
     public bool Contains(string model) =>

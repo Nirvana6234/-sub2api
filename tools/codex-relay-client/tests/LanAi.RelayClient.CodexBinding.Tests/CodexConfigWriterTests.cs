@@ -69,6 +69,29 @@ public sealed class CodexConfigWriterTests : IDisposable
     }
 
     [Fact]
+    public void TheReasoningEffortCodexStartsAtDefaultsToMediumAndCanBeSetFromTheClient()
+    {
+        string none = CodexConfigWriter.MergeConfig(string.Empty, "https://relay.test/v1");
+        string chosen = CodexConfigWriter.MergeConfig(string.Empty, "https://relay.test/v1", preferredReasoningEffort: "high");
+
+        Assert.Contains("model_reasoning_effort = \"medium\"", none, StringComparison.Ordinal);
+        Assert.Contains("model_reasoning_effort = \"high\"", chosen, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"medium\"", chosen, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AReasoningEffortTheUserWroteThemselvesIsNotReplaced()
+    {
+        // Theirs is theirs to keep, whatever the client was told to prefer.
+        string merged = CodexConfigWriter.MergeConfig(
+            "model_reasoning_effort = \"low\"\n", "https://relay.test/v1", preferredReasoningEffort: "xhigh");
+
+        Assert.Contains("model_reasoning_effort = \"low\"", merged, StringComparison.Ordinal);
+        Assert.DoesNotContain("xhigh", merged, StringComparison.Ordinal);
+        Assert.Equal(1, merged.Split("model_reasoning_effort").Length - 1);
+    }
+
+    [Fact]
     public void TheApiKeyIsWrittenWhereCodexLooksForIt()
     {
         _writer.Apply("sk-relay", "https://relay.test/v1");

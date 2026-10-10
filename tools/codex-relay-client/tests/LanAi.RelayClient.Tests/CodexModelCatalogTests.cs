@@ -333,6 +333,93 @@ public sealed class CodexModelCatalogTests
         Assert.Null(await missing.GetBundledCatalogAsync());
     }
 
+    // ---- A Claude model's reasoning picker ------------------------------------
+
+    /// <summary>The plain template of the real catalog today: Codex's levels, a default, and two the bridge refuses.</summary>
+    private const string WithReasoningLevels = """
+        {"models":[{"slug":"gpt-5.5","priority":1,"visibility":"list","shell_type":"unified_exec",
+          "default_reasoning_level":"medium",
+          "supported_reasoning_levels":[
+            {"effort":"low","description":"l"},{"effort":"medium","description":"m"},{"effort":"high","description":"h"},
+            {"effort":"xhigh","description":"x"},{"effort":"max","description":"mx"},{"effort":"ultra","description":"u"}],
+          "supports_reasoning_effort_updates":true,"base_instructions":"b"}]}
+        """;
+
+    [Fact]
+    public void AClaudeModelGetsThePickerWhenAThinkingStrengthIsChosenAndOnlyWithLevelsTheBridgeAccepts()
+    {
+        CodexGroupModels models = CodexGroupModels.From(["claude-sonnet-5"])!.WithClaudeEffort("high");
+
+        JsonObject entry = Entries(CodexModelCatalog.Build(WithReasoningLevels, models)!).Single();
+
+        string[] offered = [.. ((JsonArray)entry["supported_reasoning_levels"]!).Select(l => (string)l!["effort"]!)];
+        Assert.Equal(["low", "medium", "high", "xhigh"], offered);
+        Assert.Equal("high", (string)entry["default_reasoning_level"]!);
+        Assert.True((bool)entry["supports_reasoning_effort_updates"]!);
+        // Wording is Codex's own, not rewritten here.
+        Assert.Equal("m", (string)((JsonArray)entry["supported_reasoning_levels"]!)[1]!["description"]!);
+    }
+
+    [Fact]
+    public void WithNoThinkingStrengthAClaudeModelStillGetsNoPicker()
+    {
+        JsonObject entry = Entries(CodexModelCatalog.Build(WithReasoningLevels, CodexGroupModels.From(["claude-sonnet-5"])!)!).Single();
+
+        Assert.Null(entry["default_reasoning_level"]);
+        Assert.Empty((JsonArray)entry["supported_reasoning_levels"]!);
+        Assert.False((bool)entry["supports_reasoning_effort_updates"]!);
+    }
+
+    [Theory]
+    [InlineData("max")]
+    [InlineData("ultra")]
+    [InlineData("minimal")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void AnEffortTheBridgeWouldRefuseIsNeverOffered(string? effort)
+    {
+        // A level in the picker that fails every request is worse than none.
+        CodexGroupModels models = CodexGroupModels.From(["claude-sonnet-5"])!.WithClaudeEffort(effort);
+
+        Assert.Null(models.ClaudeEffort);
+        JsonObject entry = Entries(CodexModelCatalog.Build(WithReasoningLevels, models)!).Single();
+        Assert.Empty((JsonArray)entry["supported_reasoning_levels"]!);
+    }
+
+    [Fact]
+    public void TheClaudeEffortDoesNotTouchAnOpenAiModelsOwnLevels()
+    {
+        CodexGroupModels models = CodexGroupModels.From(["gpt-6.1-sol", "claude-sonnet-5"])!.WithClaudeEffort("low");
+
+        JsonObject[] entries = Entries(CodexModelCatalog.Build(WithReasoningLevels, models)!);
+        JsonObject gpt = entries.Single(e => (string)e["slug"]! == "gpt-6.1-sol");
+        JsonObject claude = entries.Single(e => (string)e["slug"]! == "claude-sonnet-5");
+
+        Assert.Equal("medium", (string)gpt["default_reasoning_level"]!);
+        Assert.Equal(6, ((JsonArray)gpt["supported_reasoning_levels"]!).Count);
+        Assert.Equal("low", (string)claude["default_reasoning_level"]!);
+    }
+
+    [Fact]
+    public void ThePickerIsOfferedForAPinnedClaudeModelToo()
+    {
+        JsonObject entry = Entries(CodexModelCatalog.Build(WithReasoningLevels, CodexGroupModels.Pinned("claude-opus-5").WithClaudeEffort("medium"))!).Single();
+
+        Assert.Equal("medium", (string)entry["default_reasoning_level"]!);
+        Assert.Equal(4, ((JsonArray)entry["supported_reasoning_levels"]!).Count);
+    }
+
+    [Fact]
+    public void ChangingTheThinkingStrengthChangesWhatCodexIsToldTheListIs()
+    {
+        // Codex keeps the list it was given until the version it is told changes.
+        CodexGroupModels none = CodexGroupModels.From(["claude-sonnet-5"])!;
+
+        Assert.NotEqual(none.Signature, none.WithClaudeEffort("high").Signature);
+        Assert.NotEqual(none.WithClaudeEffort("low").Signature, none.WithClaudeEffort("high").Signature);
+        Assert.Equal(none.Signature, none.WithClaudeEffort(null).Signature);
+    }
+
     [Fact]
     public async Task TheStartupProbeLogsWhereItLookedWhenCodexIsNotFound()
     {

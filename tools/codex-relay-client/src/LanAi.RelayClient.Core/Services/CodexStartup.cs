@@ -480,7 +480,7 @@ internal sealed class CodexStartup : ICodexStartup
             IReadOnlyCollection<string>? keepModelIfIn = keepUserModelIfServed ? groupModels?.Models : null;
             try
             {
-                _config.Apply(codexKey, codexBaseUrl, preferredModel, catalogUrl, keepModelIfIn);
+                _config.Apply(codexKey, codexBaseUrl, preferredModel, catalogUrl, keepModelIfIn, groupModels?.ClaudeEffort);
                 ClientLog.Info(_localRelay is null ? $"已写入 ChatGPT 配置，授权 {managedKey!.Id}" : "已写入 ChatGPT 本机 Relay 配置");
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -527,7 +527,7 @@ internal sealed class CodexStartup : ICodexStartup
                 // branch, which left that guard off entirely on the growing share of
                 // machines where the port never opens.
                 await _routeGuard
-                    .StartAsync(codexKey, codexBaseUrl, cancellationToken, catalogUrl, preferredModel, keepModelIfIn)
+                    .StartAsync(codexKey, codexBaseUrl, cancellationToken, catalogUrl, preferredModel, keepModelIfIn, groupModels?.ClaudeEffort)
                     .ConfigureAwait(true);
 
                 _servingCodex = true;

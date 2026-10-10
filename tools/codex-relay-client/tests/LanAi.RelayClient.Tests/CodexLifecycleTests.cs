@@ -416,7 +416,8 @@ public sealed class CodexLifecycleTests : IDisposable
             CancellationToken cancellationToken = default,
             string? catalogUrl = null,
             string? preferredModel = null,
-            IReadOnlyCollection<string>? keepModelIfIn = null)
+            IReadOnlyCollection<string>? keepModelIfIn = null,
+            string? preferredReasoningEffort = null)
         {
             StartEntered.SetResult();
             await AllowStart.Task.WaitAsync(cancellationToken);
@@ -446,7 +447,8 @@ public sealed class CodexLifecycleTests : IDisposable
             CancellationToken cancellationToken = default,
             string? catalogUrl = null,
             string? preferredModel = null,
-            IReadOnlyCollection<string>? keepModelIfIn = null)
+            IReadOnlyCollection<string>? keepModelIfIn = null,
+            string? preferredReasoningEffort = null)
         {
             StartCallCount++;
             return Task.CompletedTask;

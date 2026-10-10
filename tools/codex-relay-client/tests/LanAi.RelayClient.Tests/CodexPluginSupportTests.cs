@@ -502,7 +502,8 @@ public sealed class CodexPluginSupportTests : IDisposable
             CancellationToken cancellationToken = default,
             string? catalogUrl = null,
             string? preferredModel = null,
-            IReadOnlyCollection<string>? keepModelIfIn = null) =>
+            IReadOnlyCollection<string>? keepModelIfIn = null,
+            string? preferredReasoningEffort = null) =>
             Task.CompletedTask;
 
         public async Task StopAsync()

@@ -105,12 +105,18 @@ public sealed class CodexConfigWriter : ICodexLoginStore
     /// user's is not among these — a model the user picked and the group serves is theirs to
     /// keep. Null replaces unconditionally.
     /// </param>
+    /// <param name="preferredReasoningEffort">
+    /// The effort Codex starts a conversation at, for a model whose picker offers one. Only used
+    /// where the user's own file has no <c>model_reasoning_effort</c>: theirs is theirs to keep.
+    /// Null writes the usual default.
+    /// </param>
     public void Apply(
         string apiKey,
         string baseUrl,
         string? preferredModel = null,
         string? catalogUrl = null,
-        IReadOnlyCollection<string>? keepModelIfIn = null)
+        IReadOnlyCollection<string>? keepModelIfIn = null,
+        string? preferredReasoningEffort = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(apiKey);
         ArgumentException.ThrowIfNullOrWhiteSpace(baseUrl);
@@ -121,7 +127,7 @@ public sealed class CodexConfigWriter : ICodexLoginStore
             Directory.CreateDirectory(_paths.Home);
 
             WriteAuth(apiKey, firstCapture);
-            WriteConfig(baseUrl, preferredModel, catalogUrl, keepModelIfIn);
+            WriteConfig(baseUrl, preferredModel, catalogUrl, keepModelIfIn, preferredReasoningEffort);
 
             if (catalogUrl is not null)
             {
@@ -632,13 +638,14 @@ public sealed class CodexConfigWriter : ICodexLoginStore
         string baseUrl,
         string? preferredModel,
         string? catalogUrl = null,
-        IReadOnlyCollection<string>? keepModelIfIn = null)
+        IReadOnlyCollection<string>? keepModelIfIn = null,
+        string? preferredReasoningEffort = null)
     {
         string existing = File.Exists(_paths.ConfigPath)
             ? File.ReadAllText(_paths.ConfigPath)
             : string.Empty;
 
-        AtomicWrite(_paths.ConfigPath, MergeConfig(existing, baseUrl, preferredModel, catalogUrl, keepModelIfIn));
+        AtomicWrite(_paths.ConfigPath, MergeConfig(existing, baseUrl, preferredModel, catalogUrl, keepModelIfIn, preferredReasoningEffort));
     }
 
     /// <summary>
@@ -650,7 +657,8 @@ public sealed class CodexConfigWriter : ICodexLoginStore
         string baseUrl,
         string? preferredModel = null,
         string? catalogUrl = null,
-        IReadOnlyCollection<string>? keepModelIfIn = null)
+        IReadOnlyCollection<string>? keepModelIfIn = null,
+        string? preferredReasoningEffort = null)
     {
         var preamble = new List<string>();
         var sections = new List<(string Header, List<string> Body)>();
@@ -723,7 +731,7 @@ public sealed class CodexConfigWriter : ICodexLoginStore
 
         if (!hasReasoningEffort)
         {
-            topLevel.Add("model_reasoning_effort = \"medium\"");
+            topLevel.Add($"model_reasoning_effort = \"{(string.IsNullOrWhiteSpace(preferredReasoningEffort) ? "medium" : EscapeToml(preferredReasoningEffort.Trim()))}\"");
         }
 
         if (catalogUrl is not null)
